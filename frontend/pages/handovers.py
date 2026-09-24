@@ -18,6 +18,7 @@ _ACTION_COLOR_MAP = {
     "green":  "#16A34A",
     "orange": "#EA580C",
     "purple": "#7C3AED",
+    "gray":   "#6B7280",
 }
 
 @ui.page("/handovers")
@@ -39,6 +40,7 @@ async def handovers_page():
     # Nhập được số tờ hay không = vai trò cho ghi VÀ nhóm được cấp feature. Tính một
     # lần ở đây vì lưới gọi lại cho từng ô (30 ngày × N cán bộ).
     can_save = can_write and api.has_feature("handovers.save_entry")
+    can_note = can_write and api.has_feature("handovers.edit_note")
     if not api.has_feature("menu.handovers"):
         ui.navigate.to("/home")
         return
@@ -246,10 +248,24 @@ async def handovers_page():
         # được định nghĩa trước chỗ đọc query param, và phải xoá được sau khi dùng.
         focus_entry: list = [None]
 
+        def _kho_tab() -> dict | None:
+            """app.storage.tab, hoặc None khi WebSocket chưa nối — NiceGUI ném RuntimeError.
+
+            Mạng chậm quá 3 giây (hết giờ `client.connected()` bên dưới) thì trước đây
+            dòng đọc bộ lọc ném lỗi và phần còn lại của trang không dựng — log 22/09/2026.
+            Thiếu kho chỉ mất việc nhớ bộ lọc qua F5, không đáng làm hỏng cả trang."""
+            try:
+                return app.storage.tab
+            except RuntimeError:
+                return None
+
         def _save_filter_state():
-            app.storage.tab["hv_dept"]  = sel_dept.value
-            app.storage.tab["hv_year"]  = sel_year.value
-            app.storage.tab["hv_month"] = sel_month.value
+            kho = _kho_tab()
+            if kho is None:
+                return
+            kho["hv_dept"]  = sel_dept.value
+            kho["hv_year"]  = sel_year.value
+            kho["hv_month"] = sel_month.value
 
         # ── Side panel renderer ───────────────────────────────────────────────
         async def open_entry_panel(entry_id: int, user_name: str):
@@ -293,6 +309,43 @@ async def handovers_page():
                         ui.label(status_label_text).classes("text-xs font-semibold").style(f"color:{dot_color}")
                     if hist.get("borrow_reason"):
                         ui.label(f"Lý do mượn: {hist['borrow_reason']}").classes("text-xs text-orange-700 italic")
+
+                # Ghi chú — ô quá hạn thì nội dung tự hiện ở Báo cáo bàn giao (không kèm tên)
+                with ui.column().classes("w-full px-4 py-3 border-b border-gray-100 gap-1"):
+                    ui.label("GHI CHÚ").classes("text-xs font-bold text-gray-500 tracking-widest")
+                    cur_note = hist.get("note") or ""
+                    if hist.get("note_by_name"):
+                        ui.label(
+                            f"Nhập bởi {hist['note_by_name']} · {hist.get('note_at') or ''}"
+                        ).classes("text-xs text-gray-500")
+                    if can_note:
+                        note_inp = ui.textarea(
+                            value=cur_note,
+                            placeholder="Ví dụ: giải trình nộp chậm do …",
+                        ).props("outlined autogrow dense maxlength=1000 counter").classes("w-full text-sm")
+
+                        async def _do_save_note(eid=entry_id, uname=user_name):
+                            try:
+                                res = await asyncio.to_thread(
+                                    api.put, f"/api/handovers/entries/{eid}/note",
+                                    {"note": note_inp.value or ""},
+                                )
+                            except Exception as ex2:
+                                if not _handle_api_error(ex2):
+                                    ui.notify(f"Lỗi lưu ghi chú: {ex2}", type="negative")
+                                return
+                            if not (res or {}).get("changed"):
+                                ui.notify("Ghi chú không thay đổi", type="info")
+                                return
+                            ui.notify("Đã lưu ghi chú", type="positive")
+                            await open_entry_panel(eid, uname)
+                        ui.button("Lưu ghi chú", icon="save", on_click=_do_save_note).props(
+                            "dense"
+                        ).classes("self-end bg-green-700 text-white text-xs px-3")
+                    elif cur_note:
+                        ui.label(cur_note).classes("text-sm text-gray-800 whitespace-pre-line break-words")
+                    else:
+                        ui.label("Chưa có ghi chú").classes("text-sm text-gray-500 italic")
 
                 # Thao tác
                 with ui.column().classes("w-full px-4 py-3 border-b border-gray-100 gap-2"):
@@ -494,6 +547,8 @@ async def handovers_page():
             users         = data["users"]
             entries       = data["entries"]
             days_in_month = data["days_in_month"]
+            # Ngày nghỉ lễ (số ngày trong tháng) — tô vàng y như T7/CN
+            holidays      = set(data.get("holidays") or [])
 
             # cell_data[uid][day] = {sheet_count, entry_id, entry_status}
             cell_data: dict = {}
@@ -545,9 +600,9 @@ async def handovers_page():
                     f'position:sticky;left:0;z-index:3;background:#dbeafe;">Họ và tên</div>'
                 )
                 for d in range(1, days_in_month + 1):
-                    dow = _cal.weekday(year, month, d)
-                    hbg = "#fde68a" if dow >= 5 else "#dbeafe"
-                    hcl = "#92400e" if dow >= 5 else "#1e40af"
+                    nghi = _cal.weekday(year, month, d) >= 5 or d in holidays
+                    hbg = "#fde68a" if nghi else "#dbeafe"
+                    hcl = "#92400e" if nghi else "#1e40af"
                     p.append(
                         f'<div style="{BB};flex:0 1 {CW}px;min-width:{MCW}px;text-align:center;'
                         f'font-size:13px;font-weight:700;color:{hcl};padding:10px 2px;'
@@ -574,10 +629,10 @@ async def handovers_page():
                         val     = info.get("sheet_count", 0)
                         eid     = info.get("entry_id")
                         status  = info.get("entry_status", "confirmed")
-                        dow     = _cal.weekday(year, month, d)
+                        nghi    = _cal.weekday(year, month, d) >= 5 or d in holidays
                         if val:
                             cbg, bdr = _SB.get(status, ("#f3f4f6", "1px solid #d1d5db"))
-                        elif dow >= 5:
+                        elif nghi:
                             cbg, bdr = "#fef9c3", "1px solid #dbeafe"
                         else:
                             cbg, bdr = rbg, "1px solid #dbeafe"
@@ -662,9 +717,9 @@ async def handovers_page():
         try:
             await ui.context.client.connected()
         except Exception:
-            pass
+            pass        # hết giờ chờ / người dùng đóng tab — vẫn dựng tiếp phần còn lại
 
-        saved = app.storage.tab
+        saved = _kho_tab() or {}
         init_dept  = saved.get("hv_dept",  default_dept)
         init_year  = saved.get("hv_year",  default_year)
         init_month = saved.get("hv_month", default_month)
@@ -689,8 +744,6 @@ async def handovers_page():
         sel_year.value  = init_year
         sel_month.value = init_month
 
-        ui.on('hv_open_panel', lambda e: asyncio.ensure_future(
-            open_entry_panel(e.args['entry_id'], e.args.get('user_name', ''))
-        ))
+        ui.on('hv_open_panel', lambda e: open_entry_panel(e.args['entry_id'], e.args.get('user_name', '')))
 
         await load_grid()

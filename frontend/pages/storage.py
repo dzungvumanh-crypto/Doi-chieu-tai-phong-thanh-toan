@@ -1,7 +1,7 @@
 """Trang lưu trữ và tra cứu chứng từ."""
 import asyncio
 import html as _html
-from nicegui import ui, app
+from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
@@ -98,10 +98,13 @@ def _build_cover_panel():
 
     cover_result = ui.column().classes("w-full")
 
-    def _on_file(e):
+    async def _on_file(e):
+        # await thẳng thay vì create_task: task mới làm rỗng ngăn xếp slot, mọi
+        # ui.* trong _parse() sẽ im lặng không hiện. `_parse` định nghĩa ngay bên
+        # dưới vẫn gọi được — trong thân hàm, Python tra tên lúc CHẠY.
         raw = e.content.read()
         uploader.reset()
-        asyncio.create_task(_parse(raw, e.name))
+        await _parse(raw, e.name)
 
     async def _parse(raw: bytes, name: str):
         cover_result.clear()

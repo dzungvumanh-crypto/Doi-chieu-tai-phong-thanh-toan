@@ -1410,15 +1410,19 @@ class TestCarryoverWindowNghiLeDai:
 
 
 class TestMainFromDirLichNghiLeDai:
-    """Kiểm chứng xuyên suốt: main_from_dir(db=...) đọc lịch nghỉ lễ thật từ DB và
+    """Kiểm chứng xuyên suốt: main_from_dir(db_path=...) đọc lịch nghỉ lễ thật từ DB và
     tự xử lý đúng kỳ nghỉ dài — không cần script tay ngoài pipeline như đợt
     29/8-3/9 thật (xem TestCarryoverWindowNghiLeDai để test riêng từng hàm)."""
 
     @pytest.fixture
-    def db(self):
+    def db_path(self, tmp_path):
+        # `main_from_dir` chạy qua chay_tach() (tiến trình riêng) nên nhận ĐƯỜNG
+        # DẪN DB, không nhận thẳng sqlite3.Connection (không pickle được) — dùng
+        # file thật trên đĩa, không phải ':memory:' (mỗi tiến trình mở path này
+        # sẽ là 1 DB rỗng khác nhau nếu là in-memory).
         import sqlite3
-        conn = sqlite3.connect(':memory:')
-        conn.row_factory = sqlite3.Row
+        path = tmp_path / 'test.db'
+        conn = sqlite3.connect(str(path))
         conn.executescript("""
             CREATE TABLE public_holidays (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1438,8 +1442,9 @@ class TestMainFromDirLichNghiLeDai:
             ('2026-09-02', 'Quốc khánh 2/9'),
         ):
             conn.execute("INSERT INTO public_holidays (date, name) VALUES (?,?)", (d, name))
-        yield conn
+        conn.commit()
         conn.close()
+        yield str(path)
 
     def _write_citad(self, path, trx_date):
         path.write_text(
@@ -1456,16 +1461,16 @@ class TestMainFromDirLichNghiLeDai:
             encoding='utf-8',
         )
 
-    def test_thu_5_gom_du_ca_ky_nghi_chi_khi_co_db(self, tmp_path, db):
+    def test_thu_5_gom_du_ca_ky_nghi_chi_khi_co_db(self, tmp_path, db_path):
         """
         Mỗi ngày có sẵn 1 file Core riêng (tên đúng chuẩn nhận dạng — khác dữ
         liệu ĐI thật 2026-09-05, nơi cả 6 ngày dồn trong 1 file tên chỉ mang 1
         ngày; đó là gap RIÊNG — xem Giai đoạn B trong kế hoạch, không phải test
         này). Test này nhắm đúng Giai đoạn A: dù mỗi ngày ĐÃ có nhóm riêng, báo
         cáo của ngày đi làm lại (3/9) chỉ thật sự gộp đủ dữ liệu cả kỳ nghỉ khi
-        `main_from_dir()` biết lịch nghỉ lễ thật (`db`) — không có `db`, 3/9 chỉ
-        thấy T-1 (2/9) là ngày làm việc bình thường (LICH_RONG không biết đó là
-        ngày nghỉ bù) nên không gộp thêm gì, y hệt lỗi đã gặp thật.
+        `main_from_dir()` biết lịch nghỉ lễ thật (`db_path`) — không có nó, 3/9
+        chỉ thấy T-1 (2/9) là ngày làm việc bình thường (LICH_RONG không biết đó
+        là ngày nghỉ bù) nên không gộp thêm gì, y hệt lỗi đã gặp thật.
         """
         import pandas as pd
         from backend.services.ilo1000.pipeline import main_from_dir
@@ -1486,7 +1491,7 @@ class TestMainFromDirLichNghiLeDai:
             "chính nó — KHÔNG phải hành vi mong muốn, tái hiện lỗi đã gặp thật"
         )
 
-        main_from_dir(str(input_dir), str(output_dir_with_db), db=db)
+        main_from_dir(str(input_dir), str(output_dir_with_db), db_path=db_path)
         core_with_db = pd.read_excel(output_dir_with_db / '20260903.xlsx', sheet_name='core')
         assert set(core_with_db['TRDATE'].astype(str)) == {
             '20260829', '20260830', '20260831', '20260901', '20260902', '20260903',

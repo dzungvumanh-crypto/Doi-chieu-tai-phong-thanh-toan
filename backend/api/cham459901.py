@@ -8,9 +8,8 @@ import threading
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
 
-from backend.core.config import cham459901_folder_roots
+from backend.core import phien_doi_chieu
 from backend.core.uploads import MAX_REQUEST_BYTES, safe_filename, save_upload_to
 from backend.core.deps import require_feature
 from backend.services import cham459901_service
@@ -105,39 +104,6 @@ async def _nhan_file(
     return tep, unrecognized, duplicates, aux.get("hub_di"), aux.get("hub_den"), aux.get("ton")
 
 
-def _quet_thu_muc(p: Path) -> tuple[
-    list[tuple[str, Path]], list[str], dict[str, list[str]],
-    tuple[str, Path] | None, tuple[str, Path] | None, tuple[str, Path] | None,
-]:
-    """Bản dùng cho `/process_folder` — file đã nằm sẵn trên server nên dùng
-    THẲNG đường dẫn gốc, không copy/không đọc byte vào RAM.
-
-    Lọc theo TÊN trước khi quyết định file nào được xử lý: thư mục người dùng
-    trỏ vào có thể chứa file rất nặng không liên quan (báo cáo khác, backup...)
-    — chỉ so tên (rẻ), không mở/đọc nội dung file không khớp mẫu.
-    """
-    tep: list[tuple[str, Path]] = []
-    aux: dict[str, tuple[str, Path]] = {}
-    duplicates: dict[str, list[str]] = {}
-    unrecognized: list[str] = []
-
-    for entry in sorted(p.iterdir(), key=lambda e: e.name):
-        if not entry.is_file():
-            continue
-        kind = cham459901_service.classify_upload_filename(entry.name)
-        duoi_ok = entry.name.lower().endswith(cham459901_service.DUOI_HOP_LE)
-        if kind is None and not duoi_ok:
-            unrecognized.append(entry.name)
-            continue
-        if kind is None:
-            tep.append((entry.name, entry))
-        else:
-            _ghi_nhan_trung(kind, entry.name, aux, duplicates)
-            aux[kind] = (entry.name, entry)
-
-    return tep, unrecognized, duplicates, aux.get("hub_di"), aux.get("hub_den"), aux.get("ton")
-
-
 @router.post("/process")
 async def process(
     files: list[UploadFile],
@@ -151,7 +117,13 @@ async def process(
     if not files:
         raise HTTPException(400, "Cần chọn ít nhất 1 file.")
 
-    task_token = cham459901_service.init_progress()
+    # Chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py. Trước đây
+    # module này KHÔNG có cửa nào. Đặt TRƯỚC khi nhận file để client còn đọc
+    # được 409 (Starlette đã nhận xong thân request tới đây).
+    with phien_doi_chieu.gianh_cho("cham459901") as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        task_token = cham459901_service.init_progress()
     thu_muc = cham459901_service.tao_thu_muc_upload(task_token)
     try:
         tep, unrecognized, duplicates, hub_di, hub_den, ton = await _nhan_file(files, thu_muc)
@@ -189,78 +161,6 @@ async def process(
         "unrecognized": unrecognized,
         "duplicates":   duplicates,     # {loại phụ trợ: [tên file bị ghi đè]} — rỗng nếu không trùng
         "hub_partial":  hub_partial,    # True nếu chỉ có 1/2 file HUB (cả 2 chân đều bị bỏ qua)
-    }
-
-
-def _thu_muc_hop_le(folder_path: str) -> Path:
-    """Đổi đường dẫn người dùng gõ thành Path, chỉ chấp nhận khi nằm TRONG một
-    thư mục gốc đã khai trong .env (`CHAM459901_FOLDER_ROOTS`).
-
-    Kiểm phạm vi TRƯỚC khi kiểm tồn tại — thứ tự ngược lại biến endpoint thành
-    máy dò "đường dẫn này có thật không" cho mọi chỗ trên máy chủ, vì hai câu
-    lỗi khác nhau là đủ để phân biệt. Ngoài phạm vi thì trả cùng một câu, không
-    hé lộ thư mục đó có tồn tại hay không.
-
-    `.resolve()` chạy trước khi so sánh nên "gốc_hợp_lệ/../../Windows" và
-    symlink trỏ ra ngoài đều bị bắt. Symlink NẰM TRONG thư mục hợp lệ trỏ ra
-    ngoài thì không chặn — ai đặt được symlink vào đó cũng đặt được file thật
-    vào đó, hàng rào này không phải chỗ giải quyết chuyện ấy.
-    """
-    try:
-        roots = cham459901_folder_roots()
-    except RuntimeError as e:
-        raise HTTPException(400, str(e)) from e
-
-    p = Path(folder_path).resolve()
-    if not any(p.is_relative_to(r) for r in roots):
-        raise HTTPException(
-            403,
-            "Thư mục nằm ngoài phạm vi cho phép. Chỉ quét được trong: "
-            + "; ".join(str(r) for r in roots),
-        )
-    if not p.is_dir():
-        raise HTTPException(400, f"Thư mục không tồn tại: {folder_path}")
-    return p
-
-
-class FolderRequest(BaseModel):
-    folder_path: str
-
-
-@router.post("/process_folder")
-def process_folder(
-    req: FolderRequest,
-    _=Depends(require_feature("cham_459901.process")),
-):
-    """Chạy trực tiếp từ thư mục server (không upload) — quét toàn bộ file NẰM TRỰC TIẾP
-    trong thư mục (không đệ quy vào thư mục con), tự nhận diện theo tên giống route /process.
-    Trả task_token ngay, xử lý ở luồng riêng.
-    """
-    p = _thu_muc_hop_le(req.folder_path)
-
-    tep, unrecognized, duplicates, hub_di, hub_den, ton = _quet_thu_muc(p)
-
-    if not tep:
-        raise HTTPException(
-            400,
-            _KHONG_TIM_THAY_GL02(
-                noi="thư mục đã chọn",
-                duoi=", ".join(cham459901_service.DUOI_HOP_LE),
-            ),
-        )
-
-    hub_partial = (hub_di is not None) != (hub_den is not None)
-    task_token = cham459901_service.init_progress()
-    threading.Thread(
-        target=cham459901_service.run_process,
-        args=(tep, task_token, hub_di, hub_den, ton),
-        daemon=True,
-    ).start()
-    return {
-        "task_token":   task_token,
-        "unrecognized": unrecognized,
-        "duplicates":   duplicates,
-        "hub_partial":  hub_partial,
     }
 
 

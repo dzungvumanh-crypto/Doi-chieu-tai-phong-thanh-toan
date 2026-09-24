@@ -15,20 +15,23 @@ from backend.services.ach.so_tien import doc_so_tien
 from .config import HUB_FILE_CODE, HUB_REQUIRED_COLS
 
 
-def hub_filename(ngay: str, ma_nh: str) -> str:
-    """VD `hub_filename('20260821', '202')` -> `doichieugd_20260821__05_DEN_9999_N.zip`."""
+def hub_filename(ngay: str, ma_nh: str, chieu: str = "DEN") -> str:
+    """VD `hub_filename('20260821', '202')` -> `doichieugd_20260821__05_DEN_9999_N.zip`.
+    `chieu='DI'` -> hậu tố `_DI_9999_N.zip` (2026-09-03, thêm hỗ trợ chiều đi — tên file HUB thật
+    của chiều đi dùng đúng quy ước này, chỉ khác `_DEN_`/`_DI_`, xem
+    `doichieugd_20260901__04_DI_9999_N.zip` dữ liệu mẫu thật)."""
     if ma_nh not in HUB_FILE_CODE:
         raise ValueError(f"Mã ngân hàng không hợp lệ: {ma_nh}")
-    return f"doichieugd_{ngay}__{HUB_FILE_CODE[ma_nh]}_DEN_9999_N.zip"
+    return f"doichieugd_{ngay}__{HUB_FILE_CODE[ma_nh]}_{chieu}_9999_N.zip"
 
 
-def hub_filename_glob(ngay: str, ma_nh: str) -> str:
+def hub_filename_glob(ngay: str, ma_nh: str, chieu: str = "DEN") -> str:
     """Như `hub_filename`, nhưng trả glob pattern chấp nhận hậu tố sau tên chuẩn (VD
     `..._N_v2.zip`) — cùng rủi ro tên file không đúng quy ước như CSV CORE/OSB đã gặp (dữ liệu
     export thủ công), xem `doi_chieu_song_phuong_common.py::tim_file_glob`."""
     if ma_nh not in HUB_FILE_CODE:
         raise ValueError(f"Mã ngân hàng không hợp lệ: {ma_nh}")
-    return f"doichieugd_{ngay}__{HUB_FILE_CODE[ma_nh]}_DEN_9999_N*.zip"
+    return f"doichieugd_{ngay}__{HUB_FILE_CODE[ma_nh]}_{chieu}_9999_N*.zip"
 
 
 def _doc_csv_hub_thu_cong(raw: bytes) -> pd.DataFrame:
@@ -36,23 +39,41 @@ def _doc_csv_hub_thu_cong(raw: bytes) -> pd.DataFrame:
 
     Dữ liệu thật (NH 311, 22.8.2026) có 2/712.637 dòng cột `NOI_DUNG` chứa dấu `"` chưa escape
     đúng chuẩn CSV (VD tên công ty in ngoặc kép lồng trong nội dung), khiến cả pandas C-engine
-    lẫn module `csv` chuẩn của Python đều tách nhầm thành >14 cột hoặc raise lỗi — dấu ngoặc kép
-    bị lệch cân không có cách nào phân giải "đúng" duy nhất bằng luật CSV thuần tuý.
+    lẫn module `csv` chuẩn của Python đều tách nhầm thành nhiều cột hơn thật hoặc raise lỗi — dấu
+    ngoặc kép bị lệch cân không có cách nào phân giải "đúng" duy nhất bằng luật CSV thuần tuý.
 
-    13 cột đầu (`NGAY_GIAO_DICH`...`NH_GUI`) không bao giờ chứa dấu phẩy/ngoặc kép (đã xác nhận
-    qua toàn bộ dữ liệu thật quan sát được) — tách theo đúng 13 dấu phẩy đầu tiên, phần còn lại
-    luôn là `NOI_DUNG` nguyên vẹn, không phụ thuộc việc ngoặc kép của cột này có cân bằng hay
-    không. Giữ được đầy đủ dòng + đúng mọi cột dùng làm khoá đối chiếu (`NOI_DUNG` không dùng
-    trong bất kỳ khoá nào, chỉ hiển thị tham khảo)."""
+    Định vị `NOI_DUNG` THEO TÊN CỘT trong header, KHÔNG giả định vị trí cố định (2026-09-03, sửa
+    theo khảo sát dữ liệu thật chiều đi — xem PLAN.md mục 3.5) — HUB "đến" có 14 cột, `NOI_DUNG`
+    là cột CUỐI; HUB "đi" có 17 cột, `NGAY_KENH_TRA` nằm SAU `NOI_DUNG`. Bản cũ giả định `NOI_DUNG`
+    luôn ở cuối (`line.split(",", n-1)`), đúng cho "đến" nhưng sẽ nuốt mất `NGAY_KENH_TRA` vào
+    trong `NOI_DUNG` nếu áp dụng y nguyên cho "đi". Cách làm mới: tách `n_truoc` cột đầu (trước
+    NOI_DUNG, không bao giờ chứa dấu phẩy/ngoặc kép — đã xác nhận qua toàn bộ dữ liệu thật quan
+    sát được) bằng `split(",", n_truoc)`, sau đó tách NGƯỢC `n_sau` cột cuối (sau NOI_DUNG) từ
+    phần còn lại bằng `rsplit(",", n_sau)` — phần giữa còn lại luôn là `NOI_DUNG` nguyên vẹn, bất
+    kể ngoặc kép cân hay không, và các cột sau NOI_DUNG (VD `NGAY_KENH_TRA`) không bị nuốt mất."""
     text = raw.decode("utf-8-sig")
     lines = text.splitlines()
     header = lines[0].split(",")
     n = len(header)
+    idx_noi_dung = header.index("NOI_DUNG")
+    n_truoc = idx_noi_dung          # số cột TRƯỚC NOI_DUNG
+    n_sau = n - idx_noi_dung - 1     # số cột SAU NOI_DUNG (0 cho "đến", 1 cho "đi": NGAY_KENH_TRA)
     rows = []
     for i, line in enumerate(lines[1:], start=2):
         if not line:
             continue
-        parts = line.split(",", n - 1)
+        dau = line.split(",", n_truoc)
+        if len(dau) != n_truoc + 1:
+            raise ValueError(f"Dòng {i} không tách được đủ {n_truoc} cột đầu (có {len(dau)}): {line[:200]!r}")
+        phan_con_lai = dau[-1]
+        if n_sau:
+            cuoi = phan_con_lai.rsplit(",", n_sau)
+            if len(cuoi) != n_sau + 1:
+                raise ValueError(f"Dòng {i} không tách được đủ {n_sau} cột cuối (có {len(cuoi)}): {line[:200]!r}")
+            noi_dung, *sau = cuoi
+        else:
+            noi_dung, sau = phan_con_lai, []
+        parts = dau[:-1] + [noi_dung] + sau
         if len(parts) != n:
             raise ValueError(f"Dòng {i} không tách được đủ {n} cột (có {len(parts)}): {line[:200]!r}")
         rows.append(parts)
@@ -151,3 +172,46 @@ def build_key_hub_core(df: pd.DataFrame) -> pd.Series:
     trace_norm = df["TRACE"].fillna("").str.strip().str.lstrip("'0")
     so_tien = doc_so_tien(df["SO_TIEN"], nguon="hub_core", ten_cot="SO_TIEN")
     return df["CHI_NHANH"].astype(str).str.strip() + trace_norm + so_tien.astype(str)
+
+
+# ─── Hub↔Core CHIỀU ĐI (2026-09-03) — khoá dùng SE_TRACE, không phải TRACE trực tiếp ───────────
+# Nguồn: `Đối chiếu SP chiều đi.docx` Bước 1.2/1.3. Dữ liệu thật xác nhận cột SE_TRACE nguồn LUÔN
+# RỖNG (500.058/500.058 dòng, cả NH 201 lẫn 311) — giá trị SE_TRACE dùng để so khớp luôn phải tự
+# suy ra từ TRACE, không đọc thẳng từ cột gốc. Xem PLAN.md mục 2.2/3.1.
+
+
+def mask_lenh_fx(df: pd.DataFrame) -> pd.Series:
+    """True nếu HUB không có dữ liệu ở CẢ `TRACE` lẫn `SE_TRACE` (Bước 1.2 docx-đi) — các dòng
+    này dừng ở đây, gán nhãn `"lệnh fx"`, không tham gia so khớp CORE/OSB tiếp theo."""
+    trace_rong = df["TRACE"].fillna("").str.strip() == ""
+    se_trace_rong = df["SE_TRACE"].fillna("").str.strip() == ""
+    return trace_rong & se_trace_rong
+
+
+def se_trace_hieu_dung(df: pd.DataFrame) -> pd.Series:
+    """Giá trị SE_TRACE THỰC DÙNG để so khớp (Bước 1.3 docx-đi): nếu SE_TRACE gốc rỗng mà có
+    TRACE thì dùng TRACE thay thế; dòng thuộc `mask_lenh_fx()` trả về rỗng (không quan trọng vì
+    các dòng đó đã dừng waterfall trước khi cần khoá này)."""
+    se_trace = df["SE_TRACE"].fillna("").str.strip()
+    trace = df["TRACE"].fillna("").str.strip()
+    return se_trace.mask(se_trace == "", trace)
+
+
+def build_key_hub_core_di(df: pd.DataFrame) -> pd.Series:
+    """Khoá đối chiếu HUB↔CORE chiều đi (Bước 1.3/2.6 docx-đi): `CHI_NHANH + SE_TRACE(hiệu dụng,
+    lstrip '0') + SO_TIEN`.
+
+    ⚠ 2026-09-03 — SỬA LỖI phát hiện khi verify dữ liệu thật (NH 201, 01/09/2026): bản đầu KHÔNG
+    lstrip('0') SE_TRACE, chỉ khớp được 0/972 dòng HUB có SE_TRACE bắt đầu bằng '0'; sau khi thêm
+    lstrip('0') khớp đúng 912/972 (60 dòng còn lại lệch vì lý do khác, không liên quan số 0 đầu).
+    Tổng số khớp "hub T core T" tăng từ 451.838 lên 452.750. Đây ĐÚNG bẫy đã dính ở chiều đến
+    (`build_key_hub_core()`/`load_core.py::PREFIX_TRACE_CORE` — "tài liệu không nói rõ nhưng dữ
+    liệu thật xác nhận bắt buộc lstrip('0') cả 2 bên mới khớp được") — SO_TRACE phía CORE
+    (`load_core.build_so_trace()`) đã lstrip('0') sẵn, phía HUB phải lstrip đối xứng.
+
+    KHÔNG áp dụng lstrip này cho khoá HUB↔OSB (`load_osb.build_key_hub_osb_di()`) — đúng theo
+    khuôn "đến" (`build_key_hub_core()` có lstrip, `build_key_hub_osb()` không), 2 khoá phục vụ
+    2 mục đích khác nhau."""
+    se_trace = se_trace_hieu_dung(df).str.lstrip("0")
+    so_tien = doc_so_tien(df["SO_TIEN"], nguon="hub_core_di", ten_cot="SO_TIEN")
+    return df["CHI_NHANH"].astype(str).str.strip() + se_trace + so_tien.astype(str)

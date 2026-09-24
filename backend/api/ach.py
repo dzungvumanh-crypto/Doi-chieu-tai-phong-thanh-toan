@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from backend.core import phien_doi_chieu
 from backend.core.deps import require_feature
 from backend.core.uploads import (
     MAX_REQUEST_BYTES,
@@ -89,28 +90,31 @@ async def start_job(
     # Chặn ở ĐÂY chứ không chỉ ở frontend: frontend chỉ nhớ job của tab đang mở,
     # F5 hoặc người khác chạy là nó không biết gì.
     #
-    # Thứ tự quan trọng: đặt TRƯỚC vòng read_limited(). Tới được dòng này thì
+    # Thứ tự quan trọng: đặt TRƯỚC vòng save_upload_to(). Tới được dòng này thì
     # Starlette đã nhận xong thân request (spool ra đĩa khi quá 1 MB) nên client
-    # đọc được 409 đàng hoàng; read_limited() mới là chỗ kéo file lên RAM.
-    dang = ach_service.job_dang_chay()
-    if dang:
-        raise HTTPException(409, {
-            'message': (
-                f"Máy chủ đang bận với một phiên đối chiếu khác (job {dang['job_id']}, "
-                f"trạng thái '{dang['status']}'). Chờ phiên đó xong hoặc dừng nó rồi chạy lại."
-            ),
-            'job': dang,
-        })
+    # đọc được 409 đàng hoàng.
+    #
+    # Chốt nay DÙNG CHUNG cho cả bốn module (backend/core/phien_doi_chieu.py):
+    # bản cũ chỉ hỏi "ACH có đang chạy không" nên chạy ACH cùng lúc với Song
+    # phương / ILO1000 / 459901 vẫn lọt, mà đó cũng là pipeline pandas ôm vài
+    # trăm MB y hệt.
+    #
+    # `gianh_cho()` giữ khoá qua đúng khoảng kiểm-tra → tạo-job: hai bước rời
+    # thì hai request bắn cùng lúc đều lọt (đo được: 5 request đồng thời, 2 lọt
+    # thay vì 1).
+    with phien_doi_chieu.gianh_cho('ach') as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        job_id, input_dir = ach_service.tao_job()
 
     # Ghi THẲNG từng khối xuống thư mục job, không gom vào RAM trước. Bản cũ
     # giữ cả lượt (tới 500 MB) trong một dict bytes rồi mới đưa xuống đĩa: đỉnh
     # bộ nhớ gấp đôi dung lượng thật, đúng lúc pipeline lượt trước có thể còn
     # đang ôm DataFrame. Xem save_upload_to() trong backend/core/uploads.py.
     #
-    # Job được đăng ký TRƯỚC khi đọc byte đầu tiên, nên trong suốt lúc upload
-    # (vài phút với file lớn) `job_dang_chay()` đã báo bận — cửa 409 ở trên
-    # trước đây bỏ trống đúng khoảng thời gian này.
-    job_id, input_dir = ach_service.tao_job()
+    # Job được đăng ký TRƯỚC khi đọc byte đầu tiên (ngay trong `gianh_cho` ở
+    # trên), nên trong suốt lúc upload (vài phút với file lớn) máy chủ đã báo
+    # bận — cửa 409 trước đây bỏ trống đúng khoảng thời gian này.
     try:
         total_size = 0
         da_luu: set[str] = set()
@@ -161,8 +165,17 @@ def job_dang_chay(_=Depends(_XEM)):
     """Máy chủ có đang bận phiên nào không — frontend hỏi TRƯỚC khi upload.
 
     Không có nó thì cách duy nhất để biết là gửi hết vài trăm MB lên rồi ăn 409.
+
+    `job` giữ nguyên nghĩa cũ (phiên ACH của chính module này, để trang ACH hiện
+    nút "Dừng"). `nghen` là câu trả lời ĐẦY ĐỦ của chốt chung — có giá trị cả khi
+    ACH đang rảnh nhưng ba module kia đã dùng hết suất chạy song song. Thiếu nó
+    thì cửa kiểm tra trước báo "rảnh" rồi người dùng gửi xong vài trăm MB mới ăn
+    409, đúng thứ mà endpoint này sinh ra để tránh.
     """
-    return {'job': ach_service.job_dang_chay()}
+    return {
+        'job':   ach_service.job_dang_chay(),
+        'nghen': phien_doi_chieu.kiem_tra('ach'),
+    }
 
 
 @router.post('/validate')
@@ -188,12 +201,18 @@ async def continue_job(
     <ngày>_ACH_ConfirmMISdi.xlsx đã điền cột LOAI_BO (và REFHUB bổ sung nếu có),
     chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối."""
     data = await read_limited(file, ten='File xác nhận')
-    try:
-        ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
-    except LookupError as e:
-        raise HTTPException(404, str(e))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    # Chạy tiếp là chạy lại TOÀN BỘ pipeline (~4,5 GB) mà lúc chờ xác nhận ACH được tính 0 GB
+    # — phải xét ngân sách RAM. `continue_job` đổi trạng thái sang running trong khoá, nên
+    # lượt khác không lọt qua giữa lúc kiểm và lúc chạy. Bị chặn thì job giữ nguyên chờ xác nhận.
+    with phien_doi_chieu.gianh_cho_ram('ach') as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        try:
+            ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     return {'ok': True}
 
 

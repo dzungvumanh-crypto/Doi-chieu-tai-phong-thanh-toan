@@ -21,6 +21,8 @@ FEATURES: dict[str, str] = {
     "menu.th_reports":         "Báo cáo dữ liệu thanh toán (menu)",
     "menu.staff":              "Quản lý User (menu)",
     "menu.logs":               "Nhật ký hệ thống (menu)",
+    # Tách khỏi menu.logs: xem tải máy chủ khác quyền đọc nhật ký (ai làm gì) — xem backend/api/monitor.py
+    "menu.monitor":            "Giám sát hệ thống (menu)",
     "menu.ttqt_branches":      "Danh sách CN TTQT (menu)",
 
     # Bàn giao chứng từ — thao tác
@@ -31,6 +33,7 @@ FEATURES: dict[str, str] = {
     "handovers.handback":      "Bàn giao lại chứng từ",
     # Giữ nguyên code "handovers.return_entry" — đổi code sẽ mất quyền đã gán trong group_features
     "handovers.return_entry":  "Chuyển trả chứng từ cho GDV",
+    "handovers.edit_note":     "Viết / sửa ghi chú ô chứng từ",
 
     # Đóng chứng từ — thao tác
     "bundles.generate":        "Tạo bìa chứng từ",
@@ -58,6 +61,7 @@ FEATURES: dict[str, str] = {
     "ttqt_branches.delete":    "Xoá chi nhánh",
     "ttqt_branches.import":    "Nhập danh sách từ Excel",
     "ttqt_branches.export":    "Xuất danh sách ra Excel",
+    "ttqt_branches.history":   "Xem lịch sử sửa đổi",
 
     # Quản lý User — thao tác
     "staff.create":            "Tạo tài khoản mới",
@@ -80,12 +84,23 @@ FEATURES: dict[str, str] = {
     "menu.cham_459901":    "Chấm 459901 — Phân loại bút toán TK 459901 (menu)",
     "cham_459901.process": "Xử lý file 459901 (ZIP hoặc Excel)",
 
+    # Chấm 459901-1000-000000000 — Phòng Thanh toán (sổ khác với 1000-000007709 ở trên)
+    "menu.cham_459901_000000000":    "Chấm TK 459901-1000-000000000 — Cân ITT / Điện KO offline / GD khác (menu)",
+    "cham_459901_000000000.process": "Xử lý file TK 459901-1000-000000000 (ZIP hoặc Excel)",
+
+    # Đối chiếu OSB — Phòng Thanh toán
+    "menu.doi_chieu_osb":    "Đối chiếu OSB — GL02 <-> OSB TK 519910 (menu)",
+    "doi_chieu_osb.process": "Chạy đối chiếu OSB",
+
     # Đối chiếu Song phương — Phòng Thanh toán
     "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
     "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
     # "Đối chiếu đến" (Kênh↔Hub + Hub↔Core, 2026-09-01) — tab riêng trong cùng menu
     # doi_chieu_song_phuong ở trên, tách quyền chạy khỏi quyền xem giống cham_ach.process.
     "doi_chieu_song_phuong_kenh_core.process": "Chạy \"Đối chiếu đến\" (Kênh↔Hub + Hub↔Core)",
+    # "Đối chiếu đi" (Kênh↔Hub + Hub↔Core, 2026-09-03) — tab riêng thứ 2, mã HOÀN TOÀN MỚI,
+    # chưa nhóm nào có sẵn — PHẢI cấp tay sau deploy (xem Logs_update.md), giống bài học PR#70.
+    "doi_chieu_song_phuong_kenh_core_di.process": "Chạy \"Đối chiếu đi\" (Kênh↔Hub + Hub↔Core)",
     # Chấm ILO1000 — Phòng Thanh toán. Module đang xây dựng, chưa hoàn thiện (BO xác
     # nhận 2026-08-31: chưa từng có ai kể cả admin dùng được do thiếu đúng mã này —
     # không tách quyền xem/chạy riêng vì code hiện tại (5 endpoint + frontend) chỉ
@@ -100,10 +115,24 @@ FEATURES: dict[str, str] = {
     # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
     # nói rõ đối chiếu/đối soát với hệ thống nào.
     "menu.doi_chieu_citad":     "Đối chiếu CITAD cuối ngày — CITAD ↔ PaymentHub (menu)",
+    # Mở lại bảng đã "Lưu bảng cuối" (CHỐT) về bản tạm để người lập sửa tiếp.
+    # Trước 21/09/2026 gate cứng role="admin" ở cả route lẫn nút — cùng lỗi đã
+    # sửa cho doi_chieu_citad_nostro.delete_any bên dưới. Không ai mất quyền:
+    # admin vẫn qua mọi require_feature() ở dòng đầu (siêu quyền cố ý, xem
+    # docs/DESIGN.md mục Phân quyền); mã này để cấp thêm cho Trưởng/Phó phòng
+    # mà không phải sửa mã nguồn rồi deploy lại.
+    "doi_chieu_citad.unlock":   "Mở khoá bảng đối chiếu đã chốt (CITAD ↔ PaymentHub)",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng QLTK Nostro, Vostro. Module SONG
     # SONG với menu.doi_chieu_citad ở trên, không phải phân hệ con của nó —
     # nghiệp vụ/nguồn dữ liệu khác hẳn (xem doi_chieu_citad_nostro_service.py).
     "menu.doi_chieu_citad_nostro": "Đối chiếu CITAD - PaymentHub — Phòng QLTK Nostro, Vostro (menu)",
+    # 11/09/2026: nhiều bảng độc lập/kỳ (mỗi bảng 1 chủ) — chủ bảng tự xoá
+    # bảng mình (kiểm bằng created_by, không phải quyền). Mã này là quyền
+    # THÊM: xoá được bảng của NGƯỜI KHÁC — không hard-code role="admin"
+    # (đã sai ở bản đầu, xem review PR #90) vì admin đã tự qua mọi
+    # require_feature() rồi (siêu quyền cố ý, xem docs/DESIGN.md mục Phân
+    # quyền), cấp thêm mã này cho Trưởng/Phó phòng được mà không cần sửa code.
+    "doi_chieu_citad_nostro.delete_any": "Xoá bảng đối chiếu của người khác (Phòng QLTK Nostro, Vostro)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
     "menu.doi_soat_citad":      "Đối soát chênh lệch CITAD cuối ngày — CITAD ↔ IPCAS (menu)",
     # Sổ trực cuối ngày — Phòng Thanh toán
@@ -134,6 +163,15 @@ FEATURES: dict[str, str] = {
     "quiz.upload":           "Tải bộ câu hỏi lên / đổi tên bộ",
     "quiz.delete":           "Xoá bộ câu hỏi",
 
+    # Khảo sát — biểu mẫu gửi tới nhóm user. `menu.surveys` mở menu và danh sách
+    # "Khảo sát của tôi". TRẢ LỜI không cần mã nào: có tên trong danh sách người
+    # nhận là trả lời được (dữ liệu của khảo sát, như người được giao duyệt đơn).
+    # Người tạo luôn xem được kết quả khảo sát của mình; `surveys.view_all` là
+    # để lãnh đạo xem kết quả khảo sát của mọi người.
+    "menu.surveys":          "Khảo sát (menu)",
+    "surveys.create":        "Tạo / sửa / phát hành khảo sát",
+    "surveys.view_all":      "Xem kết quả khảo sát của mọi người",
+
     # Chuẩn hoá văn bản — dùng chung cả cơ quan. Tách quyền sửa quy chuẩn ra
     # riêng: thông số trình bày là của cả đơn vị, một người đổi là mọi văn bản
     # người khác chạy sau đó đều theo số mới — không để chung với quyền dùng.
@@ -152,6 +190,23 @@ FEATURES: dict[str, str] = {
     "menu.hr_lookup":        "Tra cứu & Thống kê nhân sự (menu)",
     "hr.export":             "Xuất Excel danh sách cán bộ",
     "menu.hr_reminders":     "Nhắc lịch nhân sự (menu)",
+
+    # Thi đua khen thưởng — Phòng Tổng hợp. `menu.thi_dua` là quyền xem/tra cứu
+    # chung; ba mã quản lý theo đúng ba loại dữ liệu nhập (đơn vị/cá nhân/sáng
+    # kiến), không có khái niệm "chủ sở hữu bản ghi" như Khảo sát — ai có mã
+    # quản lý thì sửa/xoá được mọi bản ghi, giống hr.edit_all.
+    "menu.thi_dua":              "Thi đua khen thưởng (menu)",
+    "thi_dua.manage_unit":       "Nhập danh hiệu thi đua đơn vị",
+    "thi_dua.manage_individual": "Nhập danh hiệu thi đua cá nhân",
+    "thi_dua.manage_initiative": "Nhập sáng kiến cá nhân",
+    "thi_dua.export":            "Xuất Excel báo cáo thi đua khen thưởng",
+
+    # Xếp loại lao động — Phòng Tổng hợp. Một mã quản lý duy nhất (không tách
+    # theo loại như thi_dua) vì cả ba loại (xếp loại lao động/phiếu tín nhiệm/
+    # Cấp ủy) đều do cùng cán bộ Phòng Tổng hợp nhập, đúng yêu cầu gốc.
+    "menu.xep_loai":    "Xếp loại lao động (menu)",
+    "xep_loai.manage":  "Nhập / sửa / xoá xếp loại lao động",
+    "xep_loai.export":  "Xuất Excel báo cáo xếp loại lao động",
 }
 
 # ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
@@ -184,6 +239,7 @@ FEATURE_GROUPS: list[dict] = [
                             "handovers.borrow",
                             "handovers.handback",
                             "handovers.return_entry",
+                            "handovers.edit_note",
                         ],
                     },
                     {
@@ -209,16 +265,22 @@ FEATURE_GROUPS: list[dict] = [
                 "label": "Phòng Thanh toán",
                 "menus": [
                     {"code": "menu.cham_459901", "actions": ["cham_459901.process"]},
+                    {"code": "menu.cham_459901_000000000", "actions": ["cham_459901_000000000.process"]},
+                    {"code": "menu.doi_chieu_osb", "actions": ["doi_chieu_osb.process"]},
                     {
                         "code": "menu.doi_chieu_song_phuong",
                         "actions": [
                             "doi_chieu_song_phuong.process",
                             "doi_chieu_song_phuong_kenh_core.process",
+                            "doi_chieu_song_phuong_kenh_core_di.process",
                         ],
                     },
                     {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
                     {"code": "menu.cham_ilo1000", "actions": []},
-                    {"code": "menu.doi_chieu_citad", "actions": []},
+                    {
+                        "code": "menu.doi_chieu_citad",
+                        "actions": ["doi_chieu_citad.unlock"],
+                    },
                     {"code": "menu.doi_soat_citad", "actions": []},
                 ],
             },
@@ -231,7 +293,10 @@ FEATURE_GROUPS: list[dict] = [
             {
                 "label": "Phòng QLTK Nostro, Vostro",
                 "menus": [
-                    {"code": "menu.doi_chieu_citad_nostro", "actions": []},
+                    {
+                        "code": "menu.doi_chieu_citad_nostro",
+                        "actions": ["doi_chieu_citad_nostro.delete_any"],
+                    },
                 ],
             },
             {
@@ -258,6 +323,19 @@ FEATURE_GROUPS: list[dict] = [
                 "label": "Phòng Tổng hợp",
                 "menus": [
                     {"code": "menu.th_reports", "actions": []},
+                    {
+                        "code": "menu.thi_dua",
+                        "actions": [
+                            "thi_dua.manage_unit",
+                            "thi_dua.manage_individual",
+                            "thi_dua.manage_initiative",
+                            "thi_dua.export",
+                        ],
+                    },
+                    {
+                        "code": "menu.xep_loai",
+                        "actions": ["xep_loai.manage", "xep_loai.export"],
+                    },
                 ],
             },
         ],
@@ -328,6 +406,7 @@ FEATURE_GROUPS: list[dict] = [
                 "label": None,
                 "menus": [
                     {"code": "menu.quiz", "actions": ["quiz.upload", "quiz.delete"]},
+                    {"code": "menu.surveys", "actions": ["surveys.create", "surveys.view_all"]},
                     {"code": "menu.vb_format", "actions": ["vb_format.config"]},
                 ],
             },
@@ -367,6 +446,7 @@ FEATURE_GROUPS: list[dict] = [
             "ttqt_branches.delete",
             "ttqt_branches.import",
             "ttqt_branches.export",
+            "ttqt_branches.history",
         ],
     },
     {
@@ -389,6 +469,7 @@ FEATURE_GROUPS: list[dict] = [
                         ],
                     },
                     {"code": "menu.logs", "actions": []},
+                    {"code": "menu.monitor", "actions": []},
                 ],
             },
         ],

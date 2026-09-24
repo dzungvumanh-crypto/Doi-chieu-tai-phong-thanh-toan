@@ -27,6 +27,7 @@ from pathlib import Path
 
 from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
 from backend.core.don_dep import moc_don_gan_nhat
+from backend.core.tien_trinh_doi_chieu import chay_tach, trong_tien_trinh_con
 
 try:
     import pyzipper
@@ -117,14 +118,30 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
     if task_token and task_token in _progress:
         _progress[task_token]["pct"] = pct
         _progress[task_token]["msg"] = msg
+        # Trong tiến trình con: `_progress` là bản sao, phải gửi tiến độ về backend
+        gui_ve = _progress[task_token].get("_gui_ve")
+        if gui_ve:
+            gui_ve(pct, msg)
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def run_process(zip_path: Path, task_token: str) -> None:
-    """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
+    """Chạy process_zip ở tiến trình riêng (`chay_tach`); cập nhật progress và bắt lỗi.
+    Kết quả cuối ghi vào `_progress` Ở ĐÂY — `process_zip` trong con chỉ ghi được bản sao."""
+    p = _progress.get(task_token, {})
+
+    def _cap_nhat(pct: int, msg: str) -> None:
+        p["pct"], p["msg"] = pct, msg
+
     try:
-        process_zip(zip_path, task_token)
+        result = chay_tach(
+            _xu_ly_tach, ten="Đối chiếu Song phương (phân loại dữ liệu)",
+            zip_path=zip_path, task_token=task_token,
+            callbacks={"tien_do_callback": _cap_nhat},
+        )
+        if task_token in _progress:
+            _progress[task_token].update({"pct": 100, "msg": "Hoàn thành!", "done": True, "result": result})
     except Exception as e:
         log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
@@ -132,6 +149,18 @@ def run_process(zip_path: Path, task_token: str) -> None:
                 "done": True, "error": str(e),
                 "msg": "Lỗi xử lý — xem log server",
             })
+
+
+def _xu_ly_tach(zip_path: Path, task_token: str, log_callback, cancel_event, tien_do_callback) -> dict:
+    """Điểm vào của `chay_tach` — trong tiến trình con dựng mục `_progress` cục bộ để
+    `_set_prog` gửi tiến độ về backend (chỉ trong con; xem `cham459901_service._xu_ly_tach`).
+    Không có nút Dừng nên `cancel_event` bỏ qua."""
+    if trong_tien_trinh_con():
+        _progress[task_token] = {
+            "pct": 0, "msg": "", "done": False, "error": None, "result": None,
+            "_ts": time.time(), "_gui_ve": tien_do_callback,
+        }
+    return process_zip(zip_path, task_token)
 
 
 def process_zip(
@@ -456,3 +485,38 @@ def _cleanup_old_results(cutoff: float | None = None) -> None:
     stale = [k for k, v in _progress.items() if v.get("_ts", 0) < cutoff]
     for k in stale:
         _progress.pop(k, None)
+
+
+# ── Chốt chặn dùng chung ─────────────────────────────────────────────────────
+# Một lượt bị bỏ dở quá lâu coi như đã chết, không được khoá chết tính năng.
+_TTL_DANG_CHAY = 4 * 3600
+
+
+def luot_dang_chay() -> dict | None:
+    """Lượt "Phân loại dữ liệu" (chiều ĐI) đang chiếm máy chủ, None nếu rảnh.
+
+    Module này nặng thật chứ không nhẹ: `process_zip()` gom toàn bộ dòng đã định
+    tuyến vào RAM trước khi ghi file, và đường tắt numba nạp trọn một file thành
+    viên (~140 MB sau giải nén với GL02 thật — xem ghi chú trong process_zip).
+
+    `_progress` không có khoá riêng nên chụp nhanh bằng `list()` trước khi duyệt.
+    """
+    now = time.time()
+    for token, p in list(_progress.items()):
+        if p.get("done"):
+            continue
+        if now - p.get("_ts", 0) > _TTL_DANG_CHAY:
+            continue
+        return {
+            "job_id":    token,
+            "status":    "running",
+            "tuoi_giay": max(0, int(now - p.get("_ts", now))),
+        }
+    return None
+
+
+# Đặt CUỐI file: `luot_dang_chay` phải tồn tại trước khi đem đi khai.
+from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
+
+dang_ky_nguon("song_phuong_di", "Đối chiếu Song phương (phân loại dữ liệu)",
+              luot_dang_chay)

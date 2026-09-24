@@ -253,6 +253,11 @@ async def login_page(request: _StarletteRequest):
                 password = ui.input("Mật khẩu", password=True, password_toggle_button=True).classes("w-full mt-3")
                 err_label = ui.label("").classes("text-red-500 text-sm mt-1")
 
+                # Khai trước, gán thật ở `with ui.dialog() as conflict_dialog` bên dưới.
+                # Cố ý: do_login/_force_login chỉ ĐỌC hai tên này lúc người dùng bấm,
+                # khi đó hộp thoại đã dựng xong. Ruff báo F811 ở dòng `with` — đừng
+                # "dọn cho gọn" bằng cách bỏ hai dòng này: chúng là lời khai rõ ràng
+                # rằng hai closure bên dưới phụ thuộc vào tên gán muộn.
                 conflict_label = None
                 conflict_dialog = None
 

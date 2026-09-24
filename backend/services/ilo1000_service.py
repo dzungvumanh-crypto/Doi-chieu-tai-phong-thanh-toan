@@ -2,20 +2,22 @@
 
 Pattern giống ach_service.py:
   - In-memory job store (_jobs dict)
-  - Background thread + cancel_event
+  - Background thread + cancel_event; pipeline chạy ở TIẾN TRÌNH RIÊNG
+    (`chay_tach()`, backend/core/tien_trinh_doi_chieu.py) để không tranh GIL với web
   - Incremental log via polling
   - Auto-cleanup sau TTL
 """
 
 import os
 import shutil
-import sqlite3
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
+from backend.core.don_dep import moc_don_gan_nhat, xoa_thu_muc_cu
+from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.core.uploads import safe_filename
 from backend.database import DB_PATH
 from backend.services.ilo1000.pipeline import main_from_dir
@@ -55,6 +57,28 @@ def cancel_job(job_id: str) -> bool:
         job['cancel_event'].set()
         return True
     return False
+
+
+# Job ở một trong các trạng thái này là còn CHIẾM máy chủ.
+_DANG_CHIEM = ('pending', 'running')
+
+
+def job_dang_chay() -> dict | None:
+    """Job ILO1000 đang chiếm máy chủ, None nếu rảnh. Xem `ach_service` cùng tên."""
+    with _lock:
+        for job_id, job in _jobs.items():
+            if job['status'] not in _DANG_CHIEM:
+                continue
+            # Job quá cũ coi như đã chết — không có ngoại lệ này thì một lượt bị
+            # bỏ dở khoá chết tính năng cho tới khi ai đó restart backend.
+            if time.time() - job['_ts'] > CLEANUP_TTL:
+                continue
+            return {
+                'job_id':    job_id,
+                'status':    job['status'],
+                'tuoi_giay': max(0, int(time.time() - job['_ts'])),
+            }
+    return None
 
 
 def tao_job() -> tuple[str, Path]:
@@ -104,21 +128,19 @@ def _run(job_id: str, input_dir: str, output_dir: str):
         with _lock:
             job['logs'].append(msg)
 
-    # get_db() (backend/database.py) là generator function chỉ dùng đúng qua
-    # FastAPI Depends() — gọi trần trụi trả về generator object, không phải
-    # sqlite3.Connection, .execute() sẽ AttributeError ngay lần tra lịch nghỉ
-    # lễ đầu tiên (phát hiện qua phản biện 2026-09-08, xem card 121). Mở kết
-    # nối trần, đúng pattern backend/core/audit_queue.py.
-    db = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
-    db.row_factory = sqlite3.Row
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý ILO1000...')
-        output_path = main_from_dir(
+        # `main_from_dir` chạy ở TIẾN TRÌNH RIÊNG qua chay_tach() — tham số phải pickle
+        # được nên truyền ĐƯỜNG DẪN DB, không truyền sqlite3.Connection (không pickle
+        # được). Tiến trình con tự mở/đóng kết nối ngay trước khi cần tra lịch nghỉ lễ
+        # (xem `pipeline.py::main_from_dir`, phát hiện qua review PR#138 — Khánh, xem card 170).
+        output_path = chay_tach(
+            main_from_dir, ten='Chấm ILO1000',
             input_dir=input_dir,
             output_dir=output_dir,
             log_callback=log,
             cancel_event=job['cancel_event'],
-            db=db,
+            db_path=str(DB_PATH),
         )
 
         if output_path is None:
@@ -144,7 +166,6 @@ def _run(job_id: str, input_dir: str, output_dir: str):
         log(traceback.format_exc())
 
     finally:
-        db.close()
         job['_ts'] = time.time()
         _cleanup_old_jobs()
 
@@ -157,17 +178,27 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def _cleanup_old_jobs():
-    now = time.time()
+def _cleanup_old_jobs(cutoff: float | None = None):
+    """Xoá job cũ hơn mốc 23h gần nhất khỏi RAM + đĩa, kèm thư mục mồ côi.
+
+    Cùng khuôn `ach_service._cleanup_old_jobs()`. Bản cũ chỉ xoá job còn nhớ trong RAM
+    (TTL 4 giờ) và chỉ chạy khi có người chạy ILO1000 — restart backend là thư mục của
+    mọi job trước đó nằm lại `data/temp_ilo1000` mãi mãi.
+    """
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
     with _lock:
         expired = [
             jid for jid, j in _jobs.items()
-            if j['status'] in ('done', 'error', 'cancelled')
-            and now - j['_ts'] > CLEANUP_TTL
+            if j['status'] in ('done', 'error', 'cancelled') and j['_ts'] < cutoff
         ]
         for jid in expired:
             del _jobs[jid]
-    for jid in expired:
-        job_dir = TEMP_DIR / jid
-        if job_dir.exists():
-            shutil.rmtree(job_dir, ignore_errors=True)
+        con_song = set(_jobs)
+    xoa_thu_muc_cu(TEMP_DIR, cutoff, con_song)
+
+
+# Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.
+# Đặt CUỐI file: `job_dang_chay` phải tồn tại trước khi đem đi khai.
+from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
+
+dang_ky_nguon('ilo1000', 'Chấm ILO1000', job_dang_chay)

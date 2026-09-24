@@ -4,6 +4,10 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+# Moi thu muc bat dau bang .venv -- gom ban sao luu khi nang Python
+# (.venv_310_backup ~936 MB). git-save.bat chay `git add -A`, thieu dong nay la
+# commit nguyen venv cu vao repo.
+.venv*/
 
 # Database & secrets
 data/
@@ -67,3 +71,21 @@ MCB.xlsx
 # nen khong can day 800 KB nhi phan len repo - va file nen thi git khong dien duoc
 # thay doi. Dung dai dien cho phan co dau tieng Viet (cung ly do da ghi o muc "MA CB.xlsx").
 /979-QyD-NHNo-PC*.7z
+# Ca thu muc ban goc cung khong day len (go khoi repo 17/09/2026). Chi scripts/tach_mau_vb.py
+# doc no, chay tay; ket qua da nam o templates/vb_mau/. May can chay lai script tu chep thu muc vao.
+/979-QyD-NHNo-PC*/
+
+# Van ban that dung de thu module Chuan hoa van ban (co ten don vi, ten nguoi that)
+# va ban ket qua do chinh module sinh ra - khong day len repo.
+/979-QyD-NHNo-PC*/test/
+
+# File do pytest-cov sinh ra khi chay test co do phu (CI va may phat trien)
+.coverage
+.coverage.*
+
+# File nen o GOC repo (tai lieu / ma nguon ben ngoai tai ve de tham khao). git-save.bat
+# chay `git add -A` nen file nao roi vao goc cung bi commit - vd legal-merger-main.zip
+# 3,4 MB (21/09/2026). Repo khong co file nen nao duoc theo doi o goc (kiem 23/09/2026).
+/*.zip
+/*.7z
+/*.rar

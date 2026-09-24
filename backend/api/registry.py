@@ -19,6 +19,7 @@ from backend.api.handover_reports import router as handover_reports_router
 from backend.api.holidays import router as holidays_router
 from backend.api.leaves import router as leaves_router
 from backend.api.logs import router as logs_router
+from backend.api.monitor import router as monitor_router
 from backend.api.reports import router as reports_router
 from backend.api.staff import router as staff_router
 from backend.api.th_reports import router as th_reports_router
@@ -28,8 +29,11 @@ from backend.api.duty_schedule import router as duty_schedule_router
 from backend.api.duty_stats import router as duty_stats_router
 from backend.api.duty_export import router as duty_export_router
 from backend.api.cham459901 import router as cham459901_router
+from backend.api.cham459901_000000000 import router as cham459901_000000000_router
+from backend.api.doi_chieu_osb import router as doi_chieu_osb_router
 from backend.api.doi_chieu_song_phuong import router as doi_chieu_song_phuong_router
 from backend.api.doi_chieu_song_phuong_kenh_core import router as doi_chieu_song_phuong_kenh_core_router
+from backend.api.doi_chieu_song_phuong_kenh_core_di import router as doi_chieu_song_phuong_kenh_core_di_router
 from backend.api.ilo1000 import router as ilo1000_router
 from backend.api.swift_recon import router as swift_recon_router
 from backend.api.ach import router as ach_router
@@ -43,6 +47,9 @@ from backend.api.attendance import router as attendance_router
 from backend.api.quiz import router as quiz_router
 from backend.api.vb_format import router as vb_format_router
 from backend.api.hr import router as hr_router
+from backend.api.surveys import router as surveys_router
+from backend.api.thi_dua import router as thi_dua_router
+from backend.api.xep_loai import router as xep_loai_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -56,6 +63,7 @@ _ROUTERS = [
     (leaves_router,      {"prefix": "/api/leaves",         "tags": ["leaves"]}),
     (delegations_router, {"prefix": "/api/delegations",    "tags": ["delegations"]}),
     (logs_router,        {"prefix": "/api/admin/logs",     "tags": ["admin-logs"]}),
+    (monitor_router,     {"prefix": "/api/admin/monitor",  "tags": ["admin-monitor"]}),
     (dashboard_router,   {"prefix": "/api/dashboard",      "tags": ["dashboard"]}),
     (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
     (reports_router,     {}),
@@ -68,8 +76,11 @@ _ROUTERS = [
     (duty_stats_router,      {}),
     (duty_export_router,     {}),
     (cham459901_router,      {}),
+    (cham459901_000000000_router, {}),
+    (doi_chieu_osb_router,   {}),
     (doi_chieu_song_phuong_router, {}),
     (doi_chieu_song_phuong_kenh_core_router, {}),
+    (doi_chieu_song_phuong_kenh_core_di_router, {}),
     (ilo1000_router, {}),
     (swift_recon_router, {}),
     (ach_router,             {}),
@@ -83,6 +94,9 @@ _ROUTERS = [
     (quiz_router,        {}),
     (vb_format_router,   {}),
     (hr_router,          {}),
+    (surveys_router,     {}),
+    (thi_dua_router,     {}),
+    (xep_loai_router,    {}),
 ]
 
 

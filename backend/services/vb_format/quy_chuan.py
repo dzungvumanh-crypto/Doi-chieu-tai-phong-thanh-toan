@@ -151,6 +151,19 @@ QUY_CHUAN_MAC_DINH: dict = {
         # ngắt cũ đẻ ra một trang gần như trống. Tắt ô này khi văn bản thật sự
         # cần sang trang mới — Phụ lục ban hành kèm theo Quyết định chẳng hạn.
         "bo_ngat_trang_thu_cong": True,
+        # QĐ 979 chỉ đánh số tới *điểm* (a, b, c) — dưới đó không có cấp nào
+        # được khai, nên phân cấp chỉ còn trông vào thụt lề. Gạch đầu dòng thụt
+        # sâu hơn mức chung là tác giả đang nói "đây là mục con"; ép về 0 là xoá
+        # phẳng phân cấp đó.
+        "giu_thut_muc_con": True,
+        # Suy ra mục con khi tác giả KHÔNG để lại dấu hiệu nào: dòng gạch đầu
+        # dòng kết thúc bằng ":" thì các dòng gạch đầu dòng ngay sau là mục con.
+        # Xem `nhan_dien.cap_gach_dau_dong` để biết danh sách con đóng ở đâu.
+        "phan_cap_gach_dau_dong": True,
+        "thut_muc_con_cm": 1.0,
+        # Khối Kính gửi dựng bằng bảng hai cột: tính lại bề ngang cột theo cỡ
+        # chữ mới, canh giữa, bỏ viền. Xem docstring bang_kinh_gui.py.
+        "chuan_bang_kinh_gui": True,
     },
     "thanh_phan": {
         # Cỡ chữ khối đầu lấy theo con số ĐẾM ĐƯỢC trên cả 18 mẫu của Phụ lục V
@@ -187,8 +200,12 @@ QUY_CHUAN_MAC_DINH: dict = {
         # dòng — mẫu 06 và 09 của Phụ lục V đều canh giữa dòng đó. Gửi NHIỀU nơi
         # thì chỉ có chữ "Kính gửi:" đứng riêng rồi liệt kê xuống dòng, lúc đó canh
         # giữa là sai — mẫu 08 để sát trái. Hai tình huống, hai mã riêng.
-        "kinh_gui":            _tp(14, dam=None,  nghieng=None,  can="center", thut_cm=0.0, le_trai_cm=0.0, gian_dong=1.0, cach_doan_pt=0.0),
-        "kinh_gui_ds":         _tp(14, dam=None,  nghieng=None,  can="left",   thut_cm=0.0, le_trai_cm=0.0, gian_dong=1.0, cach_doan_pt=0.0),
+        # Cách đoạn 6 pt, KHÔNG phải 0 như khối đầu: Mẫu 05, 06, 08 đều đặt 6/6
+        # cho dòng Kính gửi và từng dòng "- …". Để 0 thì Kính gửi dính sát mục
+        # "I." ngay dưới (VB goc 23/09/2026) — Điều 12.6 đòi tối thiểu 6 pt giữa
+        # các đoạn, và Kính gửi thuộc phần nội dung chứ không thuộc khối đầu.
+        "kinh_gui":            _tp(14, dam=None,  nghieng=None,  can="center", thut_cm=0.0, le_trai_cm=0.0, gian_dong=1.0, cach_doan_pt=6.0),
+        "kinh_gui_ds":         _tp(14, dam=None,  nghieng=None,  can="left",   thut_cm=0.0, le_trai_cm=0.0, gian_dong=1.0, cach_doan_pt=6.0),
         "noi_nhan_tieu_de":    _tp(12, dam=True,  nghieng=True,  can="left", thut_cm=0.0, le_trai_cm=0.0, gian_dong=1.0, cach_doan_pt=0.0),
         "noi_nhan_ds":         _tp(11, dam=False, nghieng=False, can="left", thut_cm=0.0, le_trai_cm=0.0, gian_dong=1.0, cach_doan_pt=0.0),
         "quyen_han_chuc_vu":   _tp(14, dam=True,  nghieng=False, hoa="hoa", can="center", gian_dong=1.0, cach_doan_pt=0.0),
@@ -240,11 +257,22 @@ QUY_CHUAN_MAC_DINH: dict = {
     "danh_so": {
         "gach_dau_dong": True,      # mọi ký tự gạch đầu dòng → "- " (đúng một dấu cách)
         "ky_tu_gach": "-",
+        # Mục con dùng ký tự khác cấp ngoài. QĐ 979 không quy định gì dưới cấp
+        # *điểm*, nên đây là thói quen văn bản hành chính chứ không phải điều
+        # khoản: cấp ngoài "-", cấp trong "+".
+        "ky_tu_gach_cap2": "+",
         "chuan_khoan_diem": True,   # "1)" / "1/" → "1."   |   "a." / "a/" → "a)"
         "chuan_muc_la_ma": True,    # "I)" / "I/" → "I."
         "bo_bullet_tu_dong": True,  # danh sách chấm tròn của Word → gõ thẳng "- "
         # Danh sách ĐÁNH SỐ tự động của Word: mặc định TẮT — xem docstring danh_so.py.
         "bo_so_tu_dong": False,
+        # Sau số tự động là MỘT dấu cách, không phải tab — cùng chuẩn với số gõ
+        # tay "1. " / "a) " / "- " ở trên (người dùng chốt 23/09/2026). Tắt thì
+        # quay về đặt điểm dừng tab (`ap_dung._giu_tab_sau_so`).
+        "dau_cach_sau_so": True,
+        # Soát thứ tự Điều / khoản / điểm (nhảy số, trùng số, lùi số). Chỉ BÁO
+        # trong kết quả, không sửa — xem docstring soat_so.py.
+        "soat_thu_tu": True,
     },
     # ── Đánh dấu vùng đã sửa ────────────────────────────────────────────────
     "danh_dau": {

@@ -16,10 +16,13 @@ import pandas as pd
 from .config import KENH_COLS, KENH_KEY_COL, KENH_MTID_PREFIX
 
 
-def kenh_filename(ma_nh: str, loai: str) -> str:
+_TEN_CHIEU = {"DEN": "đến", "DI": "đi"}
+
+
+def kenh_filename(ma_nh: str, loai: str, chieu: str = "DEN") -> str:
     """VD `kenh_filename('202', 'SPRT')` -> `kênh đến SPRT 202.xlsx` (tên chuẩn, dữ liệu 21-23.8) —
     dùng để hiển thị trong thông báo lỗi, KHÔNG dùng để tìm file (xem `find_kenh_path`)."""
-    return f"kênh đến {loai} {ma_nh}.xlsx"
+    return f"kênh {_TEN_CHIEU[chieu]} {loai} {ma_nh}.xlsx"
 
 
 def _chuan_hoa_ten_file(s: str) -> str:
@@ -33,36 +36,48 @@ def _tu_khoa_ten_file(filename: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", _chuan_hoa_ten_file(filename)))
 
 
-def find_kenh_path(input_dir: str | Path, ma_nh: str, loai: str) -> Path | None:
+def find_kenh_path(input_dir: str | Path, ma_nh: str, loai: str, chieu: str = "DEN") -> Path | None:
     """Tìm file kênh trong thư mục bằng so khớp TỪ KHOÁ trong tên file (không phân biệt dấu/hoa-
-    thường/thứ tự) — cần đủ 3 từ khoá `kenh`, mã ngân hàng, loại (`sprt`/`spt`).
+    thường/thứ tự) — cần đủ 4 từ khoá `kenh`, mã ngân hàng, loại (`sprt`/`spt`), CHIỀU (`den`/`di`).
 
     Dữ liệu thật đã xuất hiện ≥3 quy ước đặt tên khác nhau cho cùng 1 loại file (`kênh đến SPRT
     202.xlsx`, `kênh đến 202 SPRT.xlsx`, `kenh SPRT den 201 24.8.xlsx` — không dấu, có kèm ngày)
     — so khớp theo tập từ khoá để không phải thêm 1 hàm biến thể mỗi lần nguồn đổi cách đặt tên.
+
+    ⚠️ Từ khoá `chieu` (2026-09-03, thêm khi hỗ trợ chiều đi) là BẮT BUỘC trong `can_co` — thiếu
+    nó thì 1 thư mục có cả file "đến" lẫn "đi" cùng mã NH+loại sẽ không phân biệt được, dễ chọn
+    nhầm file (bug phát hiện khi khảo sát dữ liệu thật, xem PLAN.md mục "job orchestration").
     Trả `None` nếu không thấy."""
     input_dir = Path(input_dir)
-    can_co = {"kenh", ma_nh.lower(), loai.lower()}
+    can_co = {"kenh", ma_nh.lower(), loai.lower(), chieu.lower()}
     for f in input_dir.glob("*.xlsx"):
         if can_co <= _tu_khoa_ten_file(f.name):
             return f
     return None
 
 
-def load_kenh_file(source: str | Path | BinaryIO, ma_nh: str, loai: str) -> pd.DataFrame:
+def load_kenh_file(source: str | Path | BinaryIO, ma_nh: str, loai: str, chieu: str = "DEN") -> pd.DataFrame:
     """Đọc 1 file Excel kênh, trả DataFrame dtype=str với đủ `KENH_COLS`.
 
-    Với SPRT: guard-validate 100% `MtId/MsgId` đúng prefix ngân hàng `ma_nh` (xem
-    `KENH_MTID_PREFIX`, nguồn lyxink.txt — Business Owner 2026-08-25) — bắt lỗi file
-    bị đặt/copy nhầm ngân hàng sớm và rõ ràng, thay vì chỉ thấy tỉ lệ khớp sụt bất
-    thường. Không áp dụng cho SPT (chưa có bằng chứng prefix theo NH).
+    Với SPRT chiều ĐẾN: guard-validate 100% `MtId/MsgId` đúng prefix ngân hàng `ma_nh` (xem
+    `KENH_MTID_PREFIX`, nguồn lyxink.txt — Business Owner 2026-08-25) — bắt lỗi file bị đặt/copy
+    nhầm ngân hàng sớm và rõ ràng, thay vì chỉ thấy tỉ lệ khớp sụt bất thường. Không áp dụng cho
+    SPT (chưa có bằng chứng prefix theo NH).
+
+    ⚠️ 2026-09-03 — guard này KHÔNG áp dụng được cho chiều ĐI: verify dữ liệu thật (`kenh SPRT di
+    201/311 1.9.xlsx`, TOÀN BỘ 487.466 + 843.588 dòng) cho thấy 10 ký tự đầu MtId/MsgId của CẢ 2
+    ngân hàng đều là `"0200970405"` — GIỐNG HỆT NHAU, không phải mã riêng theo NH như giả định ban
+    đầu (`KENH_MTID_PREFIX["201"]` cũ ghi `"0200970415"` — sai, và dù có sửa đúng thì 201/311 dùng
+    chung 1 mã nên vẫn không phân biệt được NH nào, guard mất tác dụng phân biệt). `config.py` đã
+    tự ghi chú "201/311 chưa verify" từ trước — nay verify xong thì hoá ra guard không dùng được
+    cho chiều đi, không phải chỉ thiếu số liệu. Bỏ qua guard khi `chieu == "DI"`.
     """
     df = pd.read_excel(source, dtype=str, engine="calamine")
     missing = set(KENH_COLS) - set(df.columns)
     if missing:
         raise ValueError(f"File kênh thiếu cột bắt buộc: {', '.join(sorted(missing))}")
 
-    if loai == "SPRT" and ma_nh in KENH_MTID_PREFIX:
+    if chieu == "DEN" and loai == "SPRT" and ma_nh in KENH_MTID_PREFIX:
         expected = KENH_MTID_PREFIX[ma_nh]
         mask_sai = df[KENH_KEY_COL].str[:10] != expected
         n_sai = int(mask_sai.sum())

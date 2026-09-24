@@ -194,6 +194,12 @@ def save_draft(
     (`ksv_decision='self_edit'`, xem request_edit()) cũng chặn GDV sửa qua
     đường này — trong lúc đó form thuộc về KSV, dùng `ksv_finalize_edit()`
     riêng, GDV không được chen vào."""
+    # Frontend đã chặn (do_save_draft), nhưng gọi thẳng API là bỏ qua được — 2 hàm ghi kia
+    # (forward_to_ksv, ksv_finalize_edit) đã kiểm ở backend, save_draft() từng thiếu. Đặt
+    # TRƯỚC nhánh "tạo mới" (rec is None) bên dưới — đường đó return sớm, đặt kiểm sau nó
+    # thì lưu nháp LẦN ĐẦU vẫn lọt được trùng GDV.
+    if gdv1_id and gdv2_id and gdv1_id == gdv2_id:
+        raise ValueError("GDV 1 và GDV 2 không được trùng nhau")
     now = _vn_now()
     rec = get_active_by_date(db, truc_date)
     if rec is None:
@@ -206,6 +212,12 @@ def save_draft(
         raise ValueError("KSV đang tự chỉnh sửa phiên này — chờ KSV lưu xong")
     if _is_locked(rec) and staff_id not in (rec.get("gdv1_id"), rec.get("gdv2_id")):
         raise NotAllowedError("Chỉ 2 GDV được phân trực ngày này mới được sửa")
+    # KSV có thể đã bị khoá từ trước (vd sau reject_fix) trong khi gdv1_id/gdv2_id
+    # còn sửa được — nếu không chặn ở đây, save_draft() lưu êm 1 bản ghi tự mâu
+    # thuẫn (GDV trùng KSV), chỉ lộ ra khi forward_to_ksv() kế tiếp báo lỗi.
+    ksv_locked = rec.get("ksv_id")
+    if ksv_locked is not None and ksv_locked in (gdv1_id, gdv2_id):
+        raise ValueError("GDV không được trùng với KSV đã chọn — không thể tự xác nhận sổ trực của chính mình")
     db.execute(
         "UPDATE so_truc_records SET gdv1_id=?, gdv2_id=?, ghi_chu=?, truc_phu_ids=?, updated_at=? WHERE id=?",
         (gdv1_id, gdv2_id, ghi_chu, json.dumps(truc_phu_ids or []), now, rec["id"]),
@@ -269,6 +281,11 @@ def forward_to_ksv(
         raise ValueError("Phải chọn đủ 2 GDV trực trước khi chuyển KSV xác nhận")
     if gdv1_id == gdv2_id:
         raise ValueError("GDV 1 và GDV 2 không được trùng nhau")
+    # Cán bộ vừa nằm trong Phòng Thanh toán (đủ điều kiện làm GDV) vừa được cấp quyền
+    # so_truc.ksv_confirm (thường là trưởng/phó phòng) — nếu không chặn, người đó tự lập
+    # sổ trực rồi tự chọn chính mình xác nhận, mất hẳn tác dụng kiểm soát chéo.
+    if ksv_id in (gdv1_id, gdv2_id):
+        raise ValueError("KSV không được trùng với GDV đang trực — không thể tự xác nhận sổ trực của chính mình")
     if rec.get("ksv_id") is not None and rec["ksv_id"] != ksv_id:
         raise ValueError(
             f"Không được đổi KSV đã chọn ban đầu ({rec.get('ksv_name') or ''}) "
@@ -478,6 +495,10 @@ def ksv_finalize_edit(
         raise ValueError("Phải chọn đủ 2 GDV trực")
     if gdv1_id == gdv2_id:
         raise ValueError("GDV 1 và GDV 2 không được trùng nhau")
+    # staff_id ở đây CHÍNH LÀ KSV (đã kiểm ở trên) — KSV không được tự gán mình làm GDV
+    # trong lúc tự sửa, cùng lý do với forward_to_ksv().
+    if staff_id in (gdv1_id, gdv2_id):
+        raise ValueError("KSV không được trùng với GDV đang trực — không thể tự xác nhận sổ trực của chính mình")
     now = _vn_now()
     cur = db.execute(
         """UPDATE so_truc_records
@@ -495,9 +516,11 @@ def ksv_finalize_edit(
 
 def list_gdv_candidates(db: sqlite3.Connection) -> list:
     """Danh sách nhân viên đang hoạt động thuộc Phòng Thanh toán (department
-    code 'PAYMENT') để chọn làm GDV1/GDV2 — không giới hạn theo role như
-    duty_staff_service.py (bất kỳ ai trong phòng cũng có thể trực), chỉ lọc
-    theo phòng ban để không hiện tên người phòng khác."""
+    code 'PAYMENT') — không giới hạn theo role, chỉ lọc theo phòng ban để
+    không hiện tên người phòng khác. Dùng cho ô "Trực phụ" (chỉ liệt kê để
+    biết, không xác nhận/khoá quyền gì — người dùng chốt 23/09/2026 giữ
+    nguyên KHÔNG lọc theo chức danh ở đây). GDV1/GDV2 dùng hàm hẹp hơn
+    `list_gdv_only_candidates()` bên dưới, KHÔNG dùng hàm này nữa."""
     rows = db.execute(
         """SELECT u.id, u.full_name
            FROM user_tttt u
@@ -508,23 +531,63 @@ def list_gdv_candidates(db: sqlite3.Connection) -> list:
     return [dict(r) for r in rows]
 
 
+def list_gdv_only_candidates(db: sqlite3.Connection) -> list:
+    """Danh sách hẹp hơn list_gdv_candidates(): CHỈ cán bộ Phòng Thanh toán
+    KHÔNG giữ chức danh quản lý phòng (loại `truong_phong`/`pho_phong`) —
+    dùng riêng cho ô chọn GDV1/GDV2. Thêm 23/09/2026 (người dùng chốt: "gdv
+    là chỉ hiện tên những người không có chức danh trong phòng", "ksv mới
+    là có chức danh") — đối xứng với điều kiện role đã áp cho
+    list_ksv_candidates(), để 2 danh sách không còn giao nhau (trừ admin,
+    vẫn đi qua mọi cửa như mọi nơi khác trong hệ thống)."""
+    rows = db.execute(
+        """SELECT u.id, u.full_name
+           FROM user_tttt u
+           JOIN departments d ON u.department_id = d.id
+           WHERE u.is_active = 1 AND u.is_deleted = 0 AND d.code = 'PAYMENT'
+             AND u.role NOT IN ('truong_phong', 'pho_phong')
+           ORDER BY u.full_name"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def list_ksv_candidates(db: sqlite3.Connection, feature_code: str = "so_truc.ksv_confirm") -> list:
-    """Danh sách người ĐƯỢC PHÉP XUẤT HIỆN trong dropdown chọn KSV — thành
-    viên của BẤT KỲ nhóm quyền nào đã được gán feature_code này (không
-    hardcode tên nhóm — admin tự gán qua trang Phân quyền theo nhóm), cộng
-    thêm mọi Quản trị viên. Chỉ quyết định ai ĐƯỢC CHỌN, không quyết định ai
-    được xác nhận/từ chối — sau khi 1 người cụ thể được chọn (`ksv_id`), CHỈ
-    đúng người đó mới thao tác được (xem ksv_confirm/ksv_reject/ksv_cancel)."""
+    """Danh sách người ĐƯỢC PHÉP XUẤT HIỆN trong dropdown chọn KSV: phải vừa
+    được cấp quyền `so_truc.ksv_confirm` qua nhóm (không hardcode tên nhóm —
+    admin tự gán ở Phân quyền theo nhóm), vừa thuộc Phòng Thanh toán (cùng
+    phòng với GDV — xem list_gdv_candidates()), VÀ giữ chức danh trưởng/phó
+    phòng (`role` = 'truong_phong'/'pho_phong'). Cộng thêm mọi Quản trị viên
+    (không lọc phòng/chức danh, vai admin đi qua mọi cửa). Chỉ quyết định ai
+    ĐƯỢC CHỌN, không quyết định ai được xác nhận/từ chối — sau khi 1 người cụ
+    thể được chọn (`ksv_id`), CHỈ đúng người đó mới thao tác được (xem
+    ksv_confirm/ksv_reject/ksv_cancel).
+
+    Lọc phòng ban thêm 21/09/2026: trước đó quyền `so_truc.ksv_confirm` gán
+    cho một nhóm lỡ có người phòng khác (hoặc nhóm dùng chung nhiều phòng) là
+    người đó hiện thẳng trong danh sách chọn KSV của Phòng Thanh toán.
+
+    Lọc chức danh thêm 23/09/2026 (người dùng chốt: "KSV chỉ cho chọn trưởng
+    phòng và các phó phòng thôi"): điều kiện `role` ở đây KHÔNG phải hard-code
+    quyền vào menu/thao tác (việc đó vẫn đi qua `so_truc.ksv_confirm` như cũ,
+    admin cấp cho ai thì người đó mới lọt qua vòng gán quyền) — đây là ĐÒI HỎI
+    NGHIỆP VỤ của chính tờ sổ trực, giống "người kiểm soát ký bảng công phải
+    là trưởng/phó phòng ACCT" đã nêu ở docs/DESIGN.md mục "Phạm vi quyền ≠
+    phạm vi dữ liệu": ai ký xác nhận sổ trực phải đúng cấp bậc, không phải ai
+    có quyền menu cũng ký được. Hai lớp lọc (quyền + chức danh) độc lập, cùng
+    phải qua cả hai."""
     rows = db.execute(
         """SELECT DISTINCT u.id, u.full_name
            FROM user_tttt u
            WHERE u.is_active = 1 AND u.is_deleted = 0 AND (
                u.role = 'admin'
-               OR u.id IN (
-                   SELECT gm.staff_id FROM group_features gf
-                   JOIN group_members gm ON gm.group_id = gf.group_id
-                   JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
-                   WHERE gf.feature_code = ?
+               OR (
+                   u.role IN ('truong_phong', 'pho_phong')
+                   AND u.id IN (
+                       SELECT gm.staff_id FROM group_features gf
+                       JOIN group_members gm ON gm.group_id = gf.group_id
+                       JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+                       WHERE gf.feature_code = ?
+                   )
+                   AND u.department_id IN (SELECT id FROM departments WHERE code = 'PAYMENT')
                )
            )
            ORDER BY u.full_name""",

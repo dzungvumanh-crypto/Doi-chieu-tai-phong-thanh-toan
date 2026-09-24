@@ -11,6 +11,191 @@ from datetime import datetime
 from backend.database import DB_PATH
 
 
+# ── Khảo sát — 2026-09-11 ─────────────────────────────────────────────────────
+# Một định nghĩa, dùng ở CẢ _create_tables() (cài mới) lẫn schema_migrations (DB
+# đang chạy). Khối Quizz chép hai bản giống hệt nhau — sửa một bên quên bên kia
+# là máy cài mới và máy nâng cấp có schema khác nhau mà không ai hay.
+_SURVEY_TABLES = [
+    # status: draft | published | closed. "Chưa mở" / "quá hạn" suy ra từ
+    # start_at / deadline (xem survey_service.trang_thai) — không lưu.
+    # start_at / deadline là TEXT khuôn 'YYYY-MM-DD HH:MM:SS' để so chuỗi trong SQL.
+    """CREATE TABLE IF NOT EXISTS surveys (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        title        VARCHAR(300) NOT NULL,
+        description  TEXT,
+        status       TEXT NOT NULL DEFAULT 'draft',
+        is_anonymous INTEGER NOT NULL DEFAULT 0,
+        allow_edit   INTEGER NOT NULL DEFAULT 0,
+        start_at     TEXT,
+        deadline     TEXT,
+        created_by   INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT,
+        published_at TEXT,
+        closed_at    TEXT
+    )""",
+    # options: JSON list chuỗi. Câu trả lời lưu SỐ THỨ TỰ lựa chọn, nên câu hỏi
+    # bị khoá sửa khi đã có người trả lời (xem survey_service.dau_van_tay_cau_hoi).
+    """CREATE TABLE IF NOT EXISTS survey_questions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        survey_id       INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        order_no        INTEGER NOT NULL,
+        qtype           TEXT NOT NULL,
+        title           TEXT NOT NULL,
+        description     TEXT,
+        required        INTEGER NOT NULL DEFAULT 0,
+        options         TEXT,
+        scale_min       INTEGER NOT NULL DEFAULT 1,
+        scale_max       INTEGER NOT NULL DEFAULT 5,
+        scale_min_label TEXT,
+        scale_max_label TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS survey_target_groups (
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        group_id  INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+        PRIMARY KEY (survey_id, group_id)
+    )""",
+    # Danh sách người nhận CHỐT lúc phát hành — không tra nhóm lúc chạy
+    # (lý do: survey_service.dong_bo_nguoi_nhan).
+    """CREATE TABLE IF NOT EXISTS survey_recipients (
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        staff_id  INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+        added_at  TEXT,
+        PRIMARY KEY (survey_id, staff_id)
+    )""",
+    # Mỗi người mỗi khảo sát MỘT bài — sửa câu trả lời là ghi đè, không thêm bài.
+    """CREATE TABLE IF NOT EXISTS survey_responses (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        survey_id    INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        staff_id     INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+        submitted_at TEXT NOT NULL,
+        updated_at   TEXT,
+        UNIQUE (survey_id, staff_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS survey_answers (
+        response_id INTEGER NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+        question_id INTEGER NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
+        value       TEXT NOT NULL,
+        PRIMARY KEY (response_id, question_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_survey_questions_sv  ON survey_questions(survey_id, order_no)",
+    "CREATE INDEX IF NOT EXISTS ix_survey_recipients_st ON survey_recipients(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_surveys_creator      ON surveys(created_by)",
+]
+
+
+# ── Thi đua khen thưởng — 2026-09-15 ───────────────────────────────────────────
+# Một định nghĩa dùng ở cả _create_tables() lẫn schema_migrations (lý do: xem
+# khối Khảo sát ngay trên). "Đơn vị" theo dõi 3 mức: toàn Trung tâm Thanh toán
+# (thi_dua_don_vi.department_id NULL), từng phòng (department_id có giá trị),
+# từng cá nhân (thi_dua_ca_nhan, khoá theo staff_id).
+_THI_DUA_TABLES = [
+    """CREATE TABLE IF NOT EXISTS thi_dua_don_vi (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        year              INTEGER NOT NULL,
+        department_id     INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        danh_hieu         TEXT NOT NULL,
+        so_quyet_dinh     TEXT,
+        ngay_quyet_dinh   DATE,
+        co_quan_ban_hanh  TEXT,
+        ghi_chu           TEXT,
+        created_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at        DATETIME NOT NULL,
+        updated_at        DATETIME NOT NULL
+    )""",
+    # cap: dang | chuyen_mon | cong_doan — backend.core.enums.ThiDuaCap.
+    """CREATE TABLE IF NOT EXISTS thi_dua_ca_nhan (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id          INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        year              INTEGER NOT NULL,
+        cap               TEXT NOT NULL CHECK(cap IN ('dang','chuyen_mon','cong_doan')),
+        danh_hieu         TEXT NOT NULL,
+        so_quyet_dinh     TEXT,
+        ngay_quyet_dinh   DATE,
+        co_quan_ban_hanh  TEXT,
+        ghi_chu           TEXT,
+        created_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at        DATETIME NOT NULL,
+        updated_at        DATETIME NOT NULL
+    )""",
+    # File quyết định công nhận lưu thẳng BLOB — quan hệ 1:1 với sáng kiến, không
+    # cần bảng đính kèm đa hình kiểu hr_attachments.
+    """CREATE TABLE IF NOT EXISTS thi_dua_sang_kien (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id           INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        year               INTEGER NOT NULL,
+        ten_sang_kien      TEXT NOT NULL,
+        so_quyet_dinh      TEXT,
+        ngay_quyet_dinh    DATE,
+        co_quan_cong_nhan  TEXT,
+        ghi_chu            TEXT,
+        file_name          TEXT,
+        file_mime          TEXT,
+        file_size          INTEGER,
+        file_content       BLOB,
+        created_by         INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at         DATETIME NOT NULL,
+        updated_at         DATETIME NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_don_vi_year     ON thi_dua_don_vi(year)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_ca_nhan_staff   ON thi_dua_ca_nhan(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_ca_nhan_year    ON thi_dua_ca_nhan(year)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_sang_kien_staff ON thi_dua_sang_kien(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_sang_kien_year  ON thi_dua_sang_kien(year)",
+]
+
+
+# ── Xếp loại lao động — 2026-09-17 ─────────────────────────────────────────────
+# Một định nghĩa dùng ở cả _create_tables() lẫn schema_migrations (lý do: xem
+# khối Khảo sát ở đầu file). `loai`: lao_dong | tin_nhiem | cap_uy — backend.
+# core.enums.LoaiXepLoai. `ky`: nam | quy — quy đi kèm số quý (1-4), nam thì
+# quy luôn NULL (backend.schemas.xep_loai.XepLoaiIn ép khi validate).
+# `department_id`/`chuc_vu` là ẢNH CHỤP phòng ban + chức danh, chức vụ của cán
+# bộ TẠI THỜI ĐIỂM xếp loại (ghi lúc tạo/nhập Excel, xem
+# backend/api/xep_loai.py::_snapshot_staff) — KHÔNG suy ra từ user_tttt lúc
+# xem báo cáo. Cán bộ chuyển phòng hoặc lên/xuống chức sau đó không được làm
+# đổi phòng/chức vụ của các xếp loại năm cũ (phát hiện qua review PR #120
+# trước khi merge, lúc bảng còn rỗng nên sửa thẳng schema, không cần migration
+# backfill). `chuc_vu` lưu nguyên giá trị `user_tttt.role` (backend.core.enums.
+# StaffRole) tại thời điểm đó — dùng để tách báo cáo "cán bộ có chức danh" ra
+# khỏi "cán bộ" nói chung, đúng yêu cầu gốc của tính năng.
+_XEP_LOAI_TABLES = [
+    """CREATE TABLE IF NOT EXISTS xep_loai_lao_dong (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        chuc_vu       TEXT,
+        loai          TEXT NOT NULL CHECK(loai IN ('lao_dong','tin_nhiem','cap_uy')),
+        ky            TEXT NOT NULL CHECK(ky IN ('nam','quy')),
+        nam           INTEGER NOT NULL,
+        quy           INTEGER,
+        ket_qua       TEXT NOT NULL,
+        ghi_chu       TEXT,
+        created_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at    DATETIME NOT NULL,
+        updated_at    DATETIME NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_staff   ON xep_loai_lao_dong(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_nam     ON xep_loai_lao_dong(nam)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_loai    ON xep_loai_lao_dong(loai)",
+    # ix_xep_loai_dept/chucvu KHÔNG đứng ở đây dù cùng logic — _create_tables()
+    # chạy list này KHÔNG bọc try/except (khác schema_migrations bên dưới), nên
+    # trên DB đã tạo bảng từ TRƯỚC khi có 2 cột department_id/chuc_vu, CREATE
+    # TABLE IF NOT EXISTS là no-op rồi CREATE INDEX trên cột chưa tồn tại sẽ
+    # crash cứng ngay từ _create_tables(), chặn khởi động vĩnh viễn (tự dính lỗi
+    # này 2026-09-21). Định nghĩa 2 index đó nằm trong schema_migrations, xếp
+    # SAU 2 câu ALTER TABLE thêm cột — chỗ duy nhất đảm bảo cột đã tồn tại ở cả
+    # hai trường hợp (cài mới lẫn nâng cấp) trước khi tạo index.
+    # Chặn trùng ở tầng CSDL — backend/api/xep_loai.py::_trung_lap() chỉ kiểm
+    # tra rồi mới ghi (check-then-act), hai request cùng lúc lý thuyết vẫn lách
+    # qua được. `quy` NULL với năm nên không dùng thẳng UNIQUE(staff_id, loai,
+    # nam, quy) — SQLite coi nhiều NULL là khác nhau, mất tác dụng đúng lúc cần
+    # nhất (xếp loại theo NĂM). Index trên biểu thức COALESCE(quy,0) né được.
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_xep_loai_unique "
+    "ON xep_loai_lao_dong(staff_id, loai, nam, COALESCE(quy, 0))",
+]
+
+
 # ── Tạo tables (fresh install) ────────────────────────────────────────────────
 def _create_tables(db_path: str):
     """Tạo tất cả bảng nếu chưa có — idempotent."""
@@ -289,6 +474,43 @@ def _create_tables(db_path: str):
             lech_json           TEXT,
             created_at          DATETIME
         )""",
+        # Từng lệnh lệch của một lượt đối soát — MỘT DÒNG MỘT LỆNH.
+        #
+        # Trước đây cả danh sách nằm trong `doi_soat_citad_history.lech_json`
+        # dưới dạng một chuỗi JSON duy nhất. Đo trên máy chủ 10/09/2026: cột đó
+        # chiếm 62,9/68,2 MB (92% toàn CSDL), dòng nặng nhất 19,34 MB, và mở nó
+        # ra tốn 97 MB RAM + 1,0 giây CPU cho MỖI lần bấm "Xem chi tiết".
+        #
+        # `extra_json` giữ mọi khoá KHÔNG có cột riêng: các bản ghi được dựng
+        # bằng `{**r, ...}` trong reconcile.py nên bộ khoá phụ thuộc dòng nguồn,
+        # không cố định. Đếm trên dữ liệu thật: 4 bộ khoá khác nhau, `cong` và
+        # `ghi_chu` có lúc vắng. Không có cột dự phòng này thì một parser thêm
+        # khoá mới sẽ làm mất dữ liệu ÂM THẦM — bản ghi vẫn lưu, chỉ thiếu field.
+        #
+        # `WITHOUT ROWID` + khoá chính `(history_id, seq)`: mọi truy vấn đều là
+        # "lượt nào, từ dòng thứ mấy", đúng thứ tự khoá chính. Bảng tự sắp theo
+        # khoá nên KHÔNG cần index phụ, cũng không cần cột `id` và rowid ẩn.
+        # Đo trên 233 794 dòng thật: bỏ được ~6 MB so với bảng thường có index.
+        """CREATE TABLE IF NOT EXISTS doi_soat_citad_lech (
+            history_id   INTEGER NOT NULL
+                         REFERENCES doi_soat_citad_history(id) ON DELETE CASCADE,
+            seq          INTEGER NOT NULL,
+            so_gd        TEXT,
+            dich_vu      TEXT,
+            loai         TEXT,
+            chieu        TEXT,
+            loai_tien    TEXT,
+            so_tien      INTEGER,
+            ngay         TEXT,
+            status       TEXT,
+            key_agri     TEXT,
+            nh_nhan      TEXT,
+            trang_thai   TEXT,
+            cong         TEXT,
+            ghi_chu      TEXT,
+            extra_json   TEXT,
+            PRIMARY KEY (history_id, seq)
+        ) WITHOUT ROWID""",
         # Sổ trực cuối ngày Phòng Thanh toán — KHÔNG tách bảng lịch sử riêng
         # như doi_chieu_citad, bảng này tự thân là lịch sử. `truc_date` KHÔNG
         # unique (khác bản đầu): KSV "từ chối" (để sửa HAY để huỷ, cả 2 đều
@@ -355,6 +577,21 @@ def _create_tables(db_path: str):
             sort_order   INTEGER,
             updated_at   DATETIME
         )""",
+        # Lịch sử sửa đổi từng chi nhánh TTQT — mỗi dòng là MỘT trường đổi.
+        # Không đặt FOREIGN KEY sang ttqt_branches: xoá chi nhánh mà mất luôn
+        # lịch sử thì đúng lúc cần tra "ai xoá, xoá cái gì" lại không còn gì để tra.
+        """CREATE TABLE IF NOT EXISTS ttqt_branch_history (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_id    INTEGER,
+            ma_cn        VARCHAR(20),
+            action       VARCHAR(20) NOT NULL,
+            field        VARCHAR(30),
+            old_value    TEXT,
+            new_value    TEXT,
+            actor_id     INTEGER REFERENCES user_tttt(id),
+            actor_name   VARCHAR(100),
+            created_at   DATETIME
+        )""",
         # ── Ôn tập trắc nghiệm (Quizz) ────────────────────────────────────
         # Bộ câu hỏi nhập MỘT LẦN từ Excel rồi dùng chung cho cả cơ quan —
         # `content_hash` để nhận ra ai đó tải lại đúng file cũ dưới tên khác.
@@ -411,6 +648,9 @@ def _create_tables(db_path: str):
             is_correct   INTEGER,
             time_ms      INTEGER
         )""",
+        *_SURVEY_TABLES,
+        *_THI_DUA_TABLES,
+        *_XEP_LOAI_TABLES,
         # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
         # `recruit_date` cố ý KHÔNG có ở đây: "Ngày tuyển dụng" chính là "Ngày vào
         # ngành" đã nằm ở `user_tttt.join_industry_date` — một mốc thì một cột.
@@ -1481,6 +1721,274 @@ def _ensure_indexes():
         # xoá — đúng tinh thần "audit trail không tính lại từ file gốc" đã ghi
         # ở đầu file này.
         "ALTER TABLE doi_chieu_citad_history ADD COLUMN session_id INTEGER REFERENCES doi_chieu_citad_sessions(id) ON DELETE SET NULL",
+
+        # ── Chấm công tự động: "hop_cong_tac" (Họp/Công tác) — 2026-09-06 ──────
+        # Review PR #77 (Người 1): 2 trigger sync attendances ở trên (tạo từ PR
+        # #22) map leave_type→ký hiệu qua CASE cứng chỉ liệt kê thai_san/
+        # bao_hiem/sick, mọi giá trị khác (kể cả "hop_cong_tac" — leave_type
+        # thêm SAU PR #22, lúc viết 2 trigger này chưa tồn tại) rơi vào ELSE
+        # 'P' = "Nghỉ phép" work_value 0.0 — nhân viên ACCT đi họp/công tác bị
+        # chấm công y hệt nghỉ phép không lương, sai hẳn bản chất (đang làm
+        # việc, chỉ không có mặt tại trụ sở). attendance_symbols đã có sẵn "CT"
+        # = "Công tác" work_value 1.0 nhưng chưa trigger nào dùng tới. Thêm
+        # nhánh WHEN 'hop_cong_tac' THEN 'CT' vào CẢ 2 trigger, cả chỗ chọn
+        # symbol lẫn chỗ tra work_value theo symbol đó (4 điểm sửa). "khong_luong"
+        # CỐ Ý vẫn rơi vào ELSE 'P' — 0.0 công là đúng bản chất (nghỉ không
+        # lương), chỉ có nhãn "P"="Nghỉ phép" là hơi rộng nghĩa, để nguyên theo
+        # ý kiến review (Phòng Tổng hợp quyết nếu muốn tách nhãn riêng sau này).
+        # DROP trước để migration chạy lại trên DB đã có trigger cũ (CREATE
+        # TRIGGER IF NOT EXISTS bỏ qua nếu trùng tên) — đúng khuôn mẫu đã dùng
+        # cho mọi lần sửa 2 trigger này trước đây (xem các khối comment phía trên).
+        "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
+            AFTER UPDATE OF status ON leave_records
+            WHEN NEW.status = 'approved' AND OLD.status != 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                            WHEN 'sick' THEN 'O' WHEN 'hop_cong_tac' THEN 'CT' ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                                WHEN 'sick' THEN 'O' WHEN 'hop_cong_tac' THEN 'CT' ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        "DROP TRIGGER IF EXISTS trg_leave_direct_insert_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
+            AFTER INSERT ON leave_records
+            WHEN NEW.status = 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                            WHEN 'sick' THEN 'O' WHEN 'hop_cong_tac' THEN 'CT' ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                                WHEN 'sick' THEN 'O' WHEN 'hop_cong_tac' THEN 'CT' ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+
+        # ── Nghỉ phép "Khác": tự chọn có tính vào hạn mức phép năm hay không —
+        # 2026-09-06 ─────────────────────────────────────────────────────────
+        # leave_type="other" trước nay LUÔN trừ hạn mức (giống "annual") — không
+        # đúng cho mọi lý do "Khác" (vd nghỉ theo luật lao động không tính vào
+        # phép năm). Cột này CHỈ có ý nghĩa khi leave_type='other'; NULL/1 (mặc
+        # định) = có tính (giữ nguyên hành vi cũ cho dữ liệu đã có từ trước),
+        # 0 = không tính — ghi nhận ngày nghỉ như các loại miễn quota sẵn có
+        # (_NO_QUOTA_TYPES). Xem _check_quota_or_borrow trong backend/api/leaves.py.
+        "ALTER TABLE leave_records ADD COLUMN other_deduct_quota INTEGER DEFAULT 1",
+
+        # ── Chuẩn hoá ký hiệu chấm công theo đúng bảng mã hệ IPCAS thật — 2026-09-07
+        # ────────────────────────────────────────────────────────────────────────
+        # Người dùng đối chiếu ảnh chụp màn hình gốc IPCAS ("Check in employees
+        # monthly for Department") — bảng mã chuẩn của ngân hàng KHÔNG trùng với
+        # suy đoán trước đó của 2 trigger sync attendances:
+        #   - "bao_hiem" (nghỉ ốm hưởng BHXH) trước map 'T' (trùng thai sản, SAI
+        #     bản chất) → đổi sang 'S' (Nghỉ ốm dài ngày — ký hiệu ốm duy nhất
+        #     IPCAS có, không có ký hiệu ốm ngắn ngày riêng).
+        #   - "sick" trước map 'O' ("Nghỉ ốm") → IPCAS không có ký hiệu 'O' nào cả
+        #     → đổi sang 'S' luôn, cùng nhóm với "bao_hiem" ở trên.
+        #   - "hop_cong_tac" trước map 'CT' (ký hiệu tự đặt, không có trong bảng mã
+        #     IPCAS thật) → đổi sang 'B' ("Đi công tác" — đúng ký hiệu IPCAS).
+        #   - "khong_luong" trước KHÔNG có nhánh riêng, rơi vào ELSE 'P' (SAI —
+        #     "Nghỉ không lương" lẫn vào "Nghỉ phép" có lương) → thêm nhánh riêng
+        #     map 'N' (IPCAS có sẵn ký hiệu này đúng cho "Nghỉ không lương").
+        #   - "other" (Khác): từ khi có other_deduct_quota (xem migration ngay
+        #     trên), loại "Khác" có 2 kiểu — có tính hạn mức (xử sự như phép năm)
+        #     hoặc không. Map theo đúng bản chất: other_deduct_quota=0 → 'K'
+        #     (Nghỉ khác), ngược lại (mặc định 1) → 'P' (Nghỉ phép), giữ đúng hành
+        #     vi cũ cho dữ liệu đã có.
+        # attendances hiện đang HOÀN TOÀN RỖNG (xác nhận trước khi viết migration
+        # này) nên không có rủi ro dữ liệu lịch sử sai lệch — sửa thẳng CASE, không
+        # cần script backfill riêng. Thêm ký hiệu 'B'/'N'/'K' còn thiếu vào
+        # attendance_symbols.
+        #
+        # CỐ Ý KHÔNG tự vô hiệu hoá 'CT'/'O' ở đây dù 2 mã này không còn nằm
+        # trong bảng chuẩn IPCAS — bản đầu tiên có thêm 1 câu UPDATE
+        # attendance_symbols SET is_active=0, nhưng migration này chạy lại MỖI
+        # LẦN khởi động app (không có bảng theo dõi "đã chạy chưa", khác ALTER/
+        # CREATE IF NOT EXISTS/INSERT OR IGNORE vốn tự an toàn khi lặp lại) —
+        # nên hễ admin chủ động bật lại 'CT'/'O' qua màn Chấm công (nút bật/tắt
+        # ký hiệu, frontend/pages/attendance.py) thì lần restart kế tiếp sẽ tự
+        # tắt lại ngay, không log, không ai biết vì sao (phát hiện qua rà soát
+        # 2026-09-08). Vô hiệu hoá 2 mã cũ là quyết định VẬN HÀNH một lần, để
+        # admin tự làm qua màn quản lý ký hiệu — không phù hợp đặt trong 1
+        # migration chạy lại vô hạn.
+        """INSERT OR IGNORE INTO attendance_symbols (symbol, description, work_value, color, is_active) VALUES
+            ('B', 'Đi công tác',      1.0, '#BFDBFE', 1),
+            ('N', 'Nghỉ không lương', 0.0, '#FDBA74', 1),
+            ('K', 'Nghỉ khác',        0.0, '#D8B4FE', 1)""",
+
+        "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
+            AFTER UPDATE OF status ON leave_records
+            WHEN NEW.status = 'approved' AND OLD.status != 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                            WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                            WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                            ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                                WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                                WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                                ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        "DROP TRIGGER IF EXISTS trg_leave_direct_insert_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
+            AFTER INSERT ON leave_records
+            WHEN NEW.status = 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                            WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                            WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                            ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                                WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                                WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                                ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        # ── Khảo sát — 2026-09-11 (định nghĩa ở _SURVEY_TABLES đầu file) ──
+        *_SURVEY_TABLES,
+        # ── Thi đua khen thưởng — 2026-09-15 (định nghĩa ở _THI_DUA_TABLES đầu file) ──
+        *_THI_DUA_TABLES,
+        # ── Xếp loại lao động — 2026-09-21: thêm department_id/chuc_vu (ảnh chụp
+        # lúc xếp loại) cho DB đã tạo bảng xep_loai_lao_dong từ trước khi có 2 cột
+        # này. PHẢI đứng TRƯỚC *_XEP_LOAI_TABLES ngay dưới — khối đó có CREATE
+        # INDEX trên cả 2 cột, chạy trước khi cột tồn tại sẽ báo "no such column"
+        # (không nằm trong danh sách lỗi được nuốt, chặn khởi động — đã tự dính
+        # lỗi này khi thêm cột nhưng quên viết ALTER TABLE cho DB cũ).
+        "ALTER TABLE xep_loai_lao_dong ADD COLUMN department_id "
+        "INTEGER REFERENCES departments(id) ON DELETE SET NULL",
+        "ALTER TABLE xep_loai_lao_dong ADD COLUMN chuc_vu TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_xep_loai_dept   ON xep_loai_lao_dong(department_id)",
+        "CREATE INDEX IF NOT EXISTS ix_xep_loai_chucvu ON xep_loai_lao_dong(chuc_vu)",
+        # ── Xếp loại lao động — 2026-09-17 (định nghĩa ở _XEP_LOAI_TABLES đầu file) ──
+        *_XEP_LOAI_TABLES,
+        # ── Ghi chú ô bàn giao — 2026-09-21 ──
+        # Nội dung ở cột `notes` có sẵn từ đầu (chưa từng được ghi). Hai cột dưới lưu
+        # người/giờ sửa gần nhất; lịch sử đầy đủ ở entry_change_logs (action note_edited).
+        # Thêm cột ở đây thì phải thêm vào bản dựng lại document_entries cuối file.
+        "ALTER TABLE document_entries ADD COLUMN note_by_id INTEGER REFERENCES user_tttt(id)",
+        "ALTER TABLE document_entries ADD COLUMN note_at DATETIME",
+        # Quyền handovers.edit_note KHÔNG cấp sẵn: người dùng chốt QTV tự tick ở màn
+        # Phân quyền chức năng (21/09/2026). Sau deploy chưa ai viết được ghi chú.
+
+        # ── Lịch sử tải máy chủ cho màn Giám sát — 2026-09-24 ──
+        # Một dòng mỗi phút (backend/services/giam_sat_mau.py), tự xoá sau 7 ngày:
+        # ~10.000 dòng, vài trăm KB. Nằm trong CSDL chứ không phải bộ nhớ vì restart
+        # backend là mất sạch — mà vừa restart xong lại đúng là lúc cần xem trước đó
+        # đã xảy ra chuyện gì. `ts` là khoá chính nên đã có sẵn chỉ mục để lọc theo giờ.
+        """CREATE TABLE IF NOT EXISTS monitor_samples (
+            ts          TEXT PRIMARY KEY,
+            cpu         REAL,
+            ram_pct     REAL,
+            ram_backend INTEGER,
+            luong_pct   REAL,
+            csdl_pct    REAL,
+            nang_pct    REAL,
+            doi_chieu   INTEGER,
+            loop_ms     INTEGER
+        )""",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -1704,7 +2212,9 @@ def _ensure_indexes():
                         confirmed_at DATETIME,
                         borrowed_at DATETIME,
                         borrow_reason TEXT,
-                        staff_id INTEGER REFERENCES user_tttt(id)
+                        staff_id INTEGER REFERENCES user_tttt(id),
+                        note_by_id INTEGER REFERENCES user_tttt(id),
+                        note_at DATETIME
                     )
                 """)
                 _cur_de.execute("INSERT INTO document_entries SELECT * FROM _de_bak")
@@ -1861,6 +2371,198 @@ def _ensure_indexes():
     finally:
         _raw_dc2.close()
 
+    # ── Rebuild doi_chieu_citad_sessions: bỏ UNIQUE(ngay, created_by) — 1 người có thể nhiều bảng/ngày ──
+    # Đảo NGƯỢC đúng điều khối rebuild ngay phía trên vừa cố định. Xác nhận
+    # yêu cầu Phòng Thanh toán 07/09/2026 (giải thích qua ảnh 3 tầng): "mỗi
+    # người 1 bảng/ngày" (khối trên) chưa đủ — thực tế cần "mỗi lần người đó
+    # TỰ TẠO bảng mới (không bấm Tải tiếp tục bảng cũ) phải sinh 1 bảng độc
+    # lập riêng", kể cả sau khi đã "Lưu bảng cuối" rồi chấm lại từ đầu. Với
+    # UNIQUE(ngay, created_by) thì lần lưu thứ 2 của cùng 1 người trong cùng
+    # ngày sẽ ĐÈ LÊN bảng thứ nhất qua ON CONFLICT — không tách được. Bỏ hẳn
+    # UNIQUE, chỉ còn khoá `id` — mỗi bảng độc lập theo đúng `id` riêng, việc
+    # "sửa tiếp bảng cũ hay tạo bảng mới" giờ do CÓ TRUYỀN session_id hay
+    # không quyết định (xem session_save() trong service), không còn suy tự
+    # động qua cặp (ngay, created_by) nữa.
+    _raw_dc3 = sqlite3.connect(DB_PATH)
+    _raw_dc3.isolation_level = None
+    try:
+        _cur_dc3 = _raw_dc3.cursor()
+        _cur_dc3.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='doi_chieu_citad_sessions'")
+        if _cur_dc3.fetchone():
+            _cur_dc3.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='doi_chieu_citad_sessions'"
+            )
+            _dc3_sql_row = _cur_dc3.fetchone()
+            _dc3_has_unique = bool(_dc3_sql_row) and "UNIQUE(ngay, created_by)" in (_dc3_sql_row[0] or "")
+            if _dc3_has_unique:  # dấu hiệu bảng vẫn còn ràng buộc cũ
+                _mig_log5 = logging.getLogger(__name__)
+                _mig_log5.info(
+                    "Rebuilding doi_chieu_citad_sessions (bỏ UNIQUE(ngay, created_by))..."
+                )
+                _cur_dc3.execute("PRAGMA foreign_keys = OFF")
+                _cur_dc3.execute("PRAGMA legacy_alter_table = ON")
+                _cur_dc3.execute("BEGIN EXCLUSIVE")
+                try:
+                    _cur_dc3.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_doi_chieu_citad_sessions_bak3'"
+                    )
+                    if _cur_dc3.fetchone():
+                        _cur_dc3.execute("DROP TABLE _doi_chieu_citad_sessions_bak3")
+                    _cur_dc3.execute("ALTER TABLE doi_chieu_citad_sessions RENAME TO _doi_chieu_citad_sessions_bak3")
+                    _cur_dc3.execute("""
+                        CREATE TABLE doi_chieu_citad_sessions (
+                            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ngay        TEXT    NOT NULL,
+                            data        TEXT    NOT NULL,
+                            updated_at  DATETIME,
+                            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+                            status      TEXT    NOT NULL DEFAULT 'final',
+                            created_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+                        )
+                    """)
+                    # Giữ nguyên `id` cũ (không để AUTOINCREMENT cấp lại) — id đã
+                    # là khoá ngoại của doi_chieu_citad_history.session_id, đổi id
+                    # ở đây sẽ làm lịch sử cũ trỏ sai bảng.
+                    _cur_dc3.execute("""
+                        INSERT INTO doi_chieu_citad_sessions
+                            (id, ngay, data, updated_at, updated_by, status, created_by)
+                        SELECT id, ngay, data, updated_at, updated_by, status, created_by
+                        FROM _doi_chieu_citad_sessions_bak3
+                    """)
+                    _cur_dc3.execute("DROP TABLE _doi_chieu_citad_sessions_bak3")
+                    _cur_dc3.execute("COMMIT")
+                    _mig_log5.info("doi_chieu_citad_sessions rebuild (lần 3) hoàn tất")
+                except Exception as _dc3_err:
+                    _cur_dc3.execute("ROLLBACK")
+                    logging.getLogger(__name__).error(
+                        "doi_chieu_citad_sessions rebuild (lần 3) thất bại: %s", _dc3_err
+                    )
+                    raise
+                finally:
+                    _cur_dc3.execute("PRAGMA legacy_alter_table = OFF")
+                    _cur_dc3.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw_dc3.close()
+
+    # ── ADD COLUMN session_id cho doi_chieu_citad_nostro_history (2026-09-11) ──
+    # Đặt TRƯỚC khối rebuild sessions ngay dưới đây — backfill bên trong khối đó
+    # cần cột này đã tồn tại. ADD COLUMN thường (không rebuild), an toàn chạy mỗi
+    # lần khởi động — tự bỏ qua nếu cột đã có (bắt lỗi "duplicate column").
+    _raw_nch = sqlite3.connect(DB_PATH)
+    try:
+        _raw_nch.execute(
+            "ALTER TABLE doi_chieu_citad_nostro_history ADD COLUMN session_id "
+            "INTEGER REFERENCES doi_chieu_citad_nostro_sessions(id) ON DELETE SET NULL"
+        )
+        _raw_nch.commit()
+    except Exception as _nch_exc:
+        if "duplicate column" not in str(_nch_exc).lower():
+            raise
+    finally:
+        _raw_nch.close()
+
+    # ── Rebuild doi_chieu_citad_nostro_sessions: khoá `ky` riêng → `id` (2026-09-11) ──
+    # Nostro/Vostro ban đầu port module CITAD-PaymentHub theo đúng mô hình "1 bản
+    # ghi CHUNG/kỳ" (ky TEXT PRIMARY KEY) — xác nhận thực tế nghiệp vụ (11/09/2026):
+    # NHIỀU NGƯỜI cần giữ bảng RIÊNG cho CÙNG 1 kỳ, không ai ghi đè ai — đúng bài
+    # toán Phòng Thanh toán đã giải bằng 3 lần rebuild ở trên. Áp dụng thẳng
+    # SCHEMA CUỐI của PTT (id PK, bỏ hẳn UNIQUE) — không cần đi qua các bước
+    # trung gian (UNIQUE(ngay,staff_id) rồi UNIQUE(ngay,created_by)) vì Nostro
+    # chưa từng cần "1 người 1 bảng/kỳ", đi thẳng luôn.
+    #
+    # KHÁC PTT: không có cột `status` — Nostro không có khái niệm "chốt bản
+    # cuối"/khoá (chưa ai yêu cầu tính năng đó cho module này).
+    _raw_ncs = sqlite3.connect(DB_PATH)
+    _raw_ncs.isolation_level = None
+    try:
+        _cur_ncs = _raw_ncs.cursor()
+        _cur_ncs.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='doi_chieu_citad_nostro_sessions'"
+        )
+        if _cur_ncs.fetchone():
+            _cur_ncs.execute("PRAGMA table_info(doi_chieu_citad_nostro_sessions)")
+            _ncs_cols = {row[1] for row in _cur_ncs.fetchall()}
+            if "id" not in _ncs_cols:  # chưa rebuild lần nào — bảng vẫn khoá theo `ky`
+                _mig_log_ncs = logging.getLogger(__name__)
+                _mig_log_ncs.info(
+                    "Rebuilding doi_chieu_citad_nostro_sessions (khoá ky riêng → id, "
+                    "cho phép nhiều bảng/kỳ)..."
+                )
+                _cur_ncs.execute("PRAGMA foreign_keys = OFF")
+                _cur_ncs.execute("PRAGMA legacy_alter_table = ON")
+                _cur_ncs.execute("BEGIN EXCLUSIVE")
+                try:
+                    _cur_ncs.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='_doi_chieu_citad_nostro_sessions_bak'"
+                    )
+                    if _cur_ncs.fetchone():
+                        _cur_ncs.execute("DROP TABLE _doi_chieu_citad_nostro_sessions_bak")
+                    _cur_ncs.execute(
+                        "ALTER TABLE doi_chieu_citad_nostro_sessions "
+                        "RENAME TO _doi_chieu_citad_nostro_sessions_bak"
+                    )
+                    _cur_ncs.execute("""
+                        CREATE TABLE doi_chieu_citad_nostro_sessions (
+                            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ky          TEXT    NOT NULL,
+                            data        TEXT    NOT NULL,
+                            updated_at  DATETIME,
+                            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+                            created_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+                        )
+                    """)
+                    # Bảng cũ CHƯA từng có `id` — không cần giữ id cũ (khác lần
+                    # rebuild PTT thứ 3, lúc đó id cũ đã là khoá ngoại của
+                    # history). Mỗi dòng cũ (1 dòng/kỳ) trở thành đúng 1 bảng,
+                    # id tự sinh mới.
+                    _cur_ncs.execute("""
+                        INSERT INTO doi_chieu_citad_nostro_sessions
+                            (ky, data, updated_at, updated_by, created_by)
+                        SELECT ky, data, updated_at, updated_by, created_by
+                        FROM _doi_chieu_citad_nostro_sessions_bak
+                    """)
+                    _cur_ncs.execute("DROP TABLE _doi_chieu_citad_nostro_sessions_bak")
+
+                    # Backfill session_id cho lịch sử cũ — CHỈ Ở ĐÂY, trong CÙNG
+                    # transaction vừa rebuild, KHÔNG đặt thành khối riêng chạy
+                    # mỗi lần khởi động (review PR #90: bản đầu đặt backfill
+                    # NGOÀI transaction này, thành khối riêng không có điều
+                    # kiện canh — chạy lại ở MỌI lần khởi động sau. Hậu quả đã
+                    # tái hiện thật: xoá 1 bảng → FK ON DELETE SET NULL đặt
+                    # session_id lịch sử của bảng đó về NULL [đúng, cố ý] →
+                    # khởi động lại → backfill chạy lại, subquery
+                    # `WHERE s.ky = history.ky` gán NHẦM lịch sử mồ côi đó
+                    # sang 1 bảng KHÁC bất kỳ cùng `ky` [sai — lịch sử của
+                    # người A bị gắn sang bảng của người B]). Đặt trong khối
+                    # `if "id" not in _ncs_cols` này thì CHỈ chạy đúng 1 lần
+                    # trong đời DB (điều kiện đó chỉ đúng đúng 1 lần), và tại
+                    # THỜI ĐIỂM NÀY mỗi `ky` cũ chỉ có ĐÚNG 1 bảng (bất biến
+                    # trước khi rebuild) nên khớp đúng chắc chắn — không còn
+                    # nguy cơ gán nhầm ở lần khởi động sau.
+                    _cur_ncs.execute("""
+                        UPDATE doi_chieu_citad_nostro_history
+                        SET session_id = (
+                            SELECT id FROM doi_chieu_citad_nostro_sessions s
+                            WHERE s.ky = doi_chieu_citad_nostro_history.ky
+                        )
+                        WHERE session_id IS NULL
+                    """)
+
+                    _cur_ncs.execute("COMMIT")
+                    _mig_log_ncs.info("doi_chieu_citad_nostro_sessions rebuild hoàn tất")
+                except Exception as _ncs_err:
+                    _cur_ncs.execute("ROLLBACK")
+                    logging.getLogger(__name__).error(
+                        "doi_chieu_citad_nostro_sessions rebuild thất bại: %s", _ncs_err
+                    )
+                    raise
+                finally:
+                    _cur_ncs.execute("PRAGMA legacy_alter_table = OFF")
+                    _cur_ncs.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw_ncs.close()
+
     index_stmts = [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",
@@ -1899,6 +2601,8 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_staff_dept_hist       ON staff_department_history(staff_id, effective_from)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_bic      ON ttqt_branches(swift_bic)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_sort     ON ttqt_branches(is_closed, sort_order)",
+        "CREATE INDEX IF NOT EXISTS ix_ttqt_hist_branch       ON ttqt_branch_history(branch_id)",
+        "CREATE INDEX IF NOT EXISTS ix_ttqt_hist_ma_cn        ON ttqt_branch_history(ma_cn)",
         "CREATE INDEX IF NOT EXISTS ix_dtbb_reports_date       ON dtbb_reports(report_date)",
         "CREATE INDEX IF NOT EXISTS ix_dtbb_reports_status     ON dtbb_reports(status)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_dtbb_reports_date_branch ON dtbb_reports(report_date, branch_code)",
@@ -1936,6 +2640,43 @@ def _ensure_indexes():
         # khiến mỗi đơn bat_buoc quét lại toàn bộ leave_records, chi phí tăng
         # theo bình phương số dòng thay vì tuyến tính.
         "CREATE INDEX IF NOT EXISTS ix_leave_records_adj ON leave_records(adjusts_leave_id)",
+        # ── Đối chiếu CITAD - PaymentHub N&V — 2026-09-11 ──────────────────────
+        # doi_chieu_citad_history KHÔNG có bản sao chép cho module Nostro/Vostro:
+        # bảng doi_chieu_citad_nostro_history thiếu hẳn index theo `ky`, trong khi
+        # get_reconciliation_history()/get_reconciliation_days() (doi_chieu_citad_nostro_service.py)
+        # đều lọc/join theo `ky` — mỗi lần mở tab "Lịch sử" hay tải 1 bản cũ là
+        # quét toàn bảng, càng nhiều lượt lưu (mọi người trong phòng, mọi kỳ)
+        # càng chậm dần.
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_nostro_history_ky ON doi_chieu_citad_nostro_history(ky)",
+        # mirror ix_doi_chieu_citad_history_session_id (PTT) — get_reconciliation_history()
+        # và so_lan_luu trong get_reconciliation_days() lọc/đếm theo session_id.
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_nostro_history_session_id ON doi_chieu_citad_nostro_history(session_id)",
+        # ── Dọn index thời ORM cũ — 2026-09-23 (cùng loại với ix_ksnb_staff_* ở trên) ──
+        # Không dòng mã nào còn tạo chúng; chúng nằm lại trong DB từ thời SQLAlchemy.
+        # Hai nhóm, đều không câu truy vấn nào cần:
+        #   - index trên khoá chính INTEGER (tức rowid) — SQLite tra thẳng rowid;
+        #   - bản sao y hệt của index mà danh sách trên vẫn tạo (ghi chú bên phải).
+        # Mỗi cái bắt SQLite ghi thêm một cây B mỗi lần thêm/sửa dòng. CỐ Ý GIỮ các index
+        # trùng ràng buộc UNIQUE (ix_public_holidays_date, ix_duty_staff_meta_user,
+        # ux_dtbb_reports_date_branch): DB tạo từ bản cũ có thể thiếu ràng buộc trong
+        # bảng, khi đó chính index đó đang giữ tính duy nhất.
+        "DROP INDEX IF EXISTS ix_departments_id",
+        "DROP INDEX IF EXISTS ix_source_users_id",
+        "DROP INDEX IF EXISTS ix_bundle_groups_id",
+        "DROP INDEX IF EXISTS ix_leave_records_id",
+        "DROP INDEX IF EXISTS ix_bundles_id",
+        "DROP INDEX IF EXISTS ix_bundle_items_id",
+        "DROP INDEX IF EXISTS ix_delegation_records_id",
+        "DROP INDEX IF EXISTS ix_entry_change_logs_id",
+        "DROP INDEX IF EXISTS ix_public_holidays_id",
+        "DROP INDEX IF EXISTS ix_login_logs_id",
+        "DROP INDEX IF EXISTS ix_leave_action_logs_id",
+        "DROP INDEX IF EXISTS ix_delegation_records_giam_doc_id",      # = ix_delegation_gd
+        "DROP INDEX IF EXISTS ix_delegation_records_pho_giam_doc_id",  # = ix_delegation_pgd
+        "DROP INDEX IF EXISTS ix_entry_change_logs_performed_by_id",   # = ix_entry_change_logs_actor
+        "DROP INDEX IF EXISTS ix_entry_change_logs_entry_id",          # = ix_entry_change_logs_entry
+        "DROP INDEX IF EXISTS ix_leave_action_logs_leave_id",          # = ix_leave_action_logs
+        "DROP INDEX IF EXISTS ix_login_logs_created_at",               # = ix_login_logs_created
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

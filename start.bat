@@ -87,7 +87,7 @@ if "!VENV_OK!"=="0" (
     %PY% -c "import sys" >nul 2>&1
     if errorlevel 1 (
         echo [LOI] Khong chay duoc Python he thong ^(lenh: %PY%^).
-        echo       Cai lai Python 3.10+ tu python.org, nho tick "Add to PATH".
+        echo       Cai lai Python 3.12 tu python.org, nho tick "Add to PATH".
         echo       Neu Windows mo Microsoft Store khi go "python": tat App Execution Alias
         echo       trong Settings ^> Apps ^> Advanced app settings ^> App execution aliases.
         pause

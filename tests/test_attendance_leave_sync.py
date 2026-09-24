@@ -95,11 +95,13 @@ def test_thai_san_duoc_danh_ky_hieu_T(db, staff):
     assert len(rows) == 1 and rows[0]["symbol"] == "T"
 
 
-def test_sick_duoc_danh_ky_hieu_O(db, staff):
+def test_sick_duoc_danh_ky_hieu_S(db, staff):
+    """IPCAS không có ký hiệu 'O' — "sick" dùng chung 'S' (Nghỉ ốm dài ngày),
+    xem migration chuẩn hoá ký hiệu chấm công 2026-09-07."""
     lid = _tao_don(db, staff["staff_id"], "2026-09-07", "2026-09-07", "sick", "nghi om")
     _duyet(db, lid)
     rows = _attendances_cua(db, staff["staff_id"])
-    assert len(rows) == 1 and rows[0]["symbol"] == "O"
+    assert len(rows) == 1 and rows[0]["symbol"] == "S"
 
 
 # ══════════════════════════════════════════════════════════════

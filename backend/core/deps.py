@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordBearer
 from backend.core.enums import StaffRole
 from backend.database import get_db, compute_annual_leave
 from backend.core.security import decode_token
-from backend.core.sessions import get_session_ip, get_session
+from backend.core.sessions import get_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -91,23 +91,28 @@ def require_admin_any(current: dict = Depends(get_current_staff)) -> dict:
     return current
 
 
+def co_quyen(db: sqlite3.Connection, current: dict, feature_code: str) -> bool:
+    """Admin hoặc có feature_code qua một nhóm đang hoạt động. Dùng khi một endpoint
+    cần ẩn BỚT một phần dữ liệu theo quyền thứ hai, không chặn cả request."""
+    if current["role"] == StaffRole.ADMIN:
+        return True
+    return db.execute(
+        """SELECT 1 FROM group_features gf
+           JOIN group_members gm ON gm.group_id = gf.group_id
+           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+           WHERE gm.staff_id = ? AND gf.feature_code = ?
+           LIMIT 1""",
+        (current["id"], feature_code),
+    ).fetchone() is not None
+
+
 def require_feature(feature_code: str):
     """Dependency factory — cho phép admin hoặc user có feature_code qua group."""
     def _check(
         current: dict = Depends(get_current_staff),
         db: sqlite3.Connection = Depends(get_db),
     ) -> dict:
-        if current["role"] == StaffRole.ADMIN:
-            return current
-        row = db.execute(
-            """SELECT 1 FROM group_features gf
-               JOIN group_members gm ON gm.group_id = gf.group_id
-               JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
-               WHERE gm.staff_id = ? AND gf.feature_code = ?
-               LIMIT 1""",
-            (current["id"], feature_code),
-        ).fetchone()
-        if not row:
+        if not co_quyen(db, current, feature_code):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Không có quyền truy cập tính năng này",

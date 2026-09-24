@@ -2,7 +2,8 @@
 
 Mỗi job:
   - Nhận các file đã upload (lưu vào temp dir)
-  - Chạy pipeline trong background thread
+  - Chạy pipeline trong background thread; pipeline chạy ở TIẾN TRÌNH RIÊNG
+    (`chay_tach()`, backend/core/tien_trinh_doi_chieu.py) để không tranh GIL với web
   - Trả log theo dạng polling
   - Hỗ trợ cancel và download kết quả
 """
@@ -20,6 +21,7 @@ from typing import Any
 
 import pandas as pd
 
+from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.core.uploads import safe_filename
 from backend.services.ach.pipeline import main_from_dir
 from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
@@ -301,12 +303,13 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
 
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý...')
-        output_path = main_from_dir(
+        output_path = chay_tach(
+            main_from_dir, ten='Đối chiếu ACH',
             input_dir=input_dir,
             output_dir=output_dir,
             ngay=ngay,
             log_callback=log,
-            summary_callback=on_summary,
+            callbacks={'summary_callback': on_summary},
             cancel_event=job['cancel_event'],
             dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,
@@ -423,3 +426,11 @@ def _cleanup_old_jobs(cutoff: float | None = None):
         except OSError as e:
             log_orphan = f'Không xoá được thư mục ACH mồ côi {d}: {e}'
             logging.getLogger(__name__).warning(log_orphan)
+
+
+# Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.
+# `job_dang_chay()` vốn đã có từ 26/08/2026; nay nó vừa phục vụ cửa 409 của
+# chính ACH, vừa là nguồn đếm cho chốt chung của cả bốn module.
+from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
+
+dang_ky_nguon('ach', 'Đối chiếu ACH', job_dang_chay)

@@ -120,7 +120,7 @@ async def groups_page():
                         icon_cls = "text-base mr-2 shrink-0 text-red-700"
                     with ui.row().classes(
                         f"w-full items-center px-3 py-2.5 cursor-pointer rounded-lg {row_cls}"
-                    ).on("click", lambda gid=g["id"]: asyncio.ensure_future(_select_group(gid))):
+                    ).on("click", lambda gid=g["id"]: _select_group(gid)):
                         ui.icon("group").classes(icon_cls)
                         with ui.column().classes("flex-1 min-w-0"):
                             ui.label(g["name"]).classes("text-sm font-medium truncate")
@@ -372,4 +372,5 @@ async def groups_page():
             if not isinstance(staff, Exception):
                 all_staff = staff
 
-        asyncio.ensure_future(_init())
+        # Nạp lần đầu bằng timer, không ensure_future — xem docs/DESIGN.md.
+        ui.timer(0, _init, once=True)

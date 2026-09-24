@@ -5,6 +5,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 
+from backend.core import phien_doi_chieu
 from backend.core.deps import require_feature
 from backend.core.uploads import MAX_REQUEST_BYTES, safe_filename, save_upload_to, so_mb
 from backend.services import ilo1000_service
@@ -47,7 +48,14 @@ async def start_job(
     if not files:
         raise HTTPException(400, 'Cần upload ít nhất 1 file.')
 
-    job_id, input_dir = ilo1000_service.tao_job()
+    # Chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py. Trước đây
+    # module này KHÔNG có cửa nào: bao nhiêu người bấm chạy cũng vào thẳng,
+    # mỗi lượt một pipeline pandas ôm vài trăm MB. Đặt TRƯỚC vòng lưu file để
+    # client còn đọc được 409 (Starlette đã nhận xong thân request tới đây).
+    with phien_doi_chieu.gianh_cho('ilo1000') as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        job_id, input_dir = ilo1000_service.tao_job()
     try:
         total_size = 0
         da_luu: set[str] = set()

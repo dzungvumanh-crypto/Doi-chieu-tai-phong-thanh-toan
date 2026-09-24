@@ -12,8 +12,9 @@ Tài liệu dự án nằm trong `docs/` (13/08/2026 gom vào cho gốc gọn). 
 
 ```bash
 pip install -r requirements.txt       # Cài thư viện (đúng những gì máy chính cần)
-pip install -r requirements-dev.txt   # Máy phát triển: thêm pytest để chạy test
+pip install -r requirements-dev.txt   # Máy phát triển: thêm pytest, pytest-cov, ruff
 python -m pytest -q                    # Chạy test
+ruff check . --select F821,F823,E9     # Quét tên chưa định nghĩa — CI đỏ nếu không sạch
 python init_db.py                  # Khởi tạo DB lần đầu
 python run.py                      # Chạy cả backend + frontend
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000  # Backend riêng

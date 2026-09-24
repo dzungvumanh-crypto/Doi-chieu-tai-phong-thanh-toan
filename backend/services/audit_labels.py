@@ -52,6 +52,7 @@ _WORK = {
     "POST /api/handovers/entries/{id}/reject":               "Từ chối bàn giao chứng từ",
     "POST /api/handovers/entries/{id}/resubmit":             "Gửi lại bàn giao chứng từ",
     "POST /api/handovers/entries/{id}/return-to-staff":      "Chuyển trả chứng từ cho GDV",
+    "PUT /api/handovers/entries/{id}/note":                  "Sửa ghi chú ô chứng từ",
     # Nghỉ phép
     "POST /api/leaves/":                          "Tạo đơn nghỉ phép",
     "DELETE /api/leaves/{id}":                    "Xóa đơn nghỉ phép",
@@ -114,6 +115,7 @@ _WORK = {
     "PATCH /api/delegations/{id}/deactivate":     "Ngừng ủy quyền duyệt",
     # Đối chiếu
     "POST /api/cham459901/process":               "Chấm đối chiếu 459901",
+    "POST /api/cham459901_000000000/process":     "Chấm đối chiếu 459901-1000-000000000",
     "POST /api/doi_chieu_song_phuong/process":    "Đối chiếu song phương",
     "POST /api/ach/start":                        "Chạy đối chiếu ACH",
     "POST /api/ach/continue/{job_id}":            "Tiếp tục ACH sau Checkpoint MIS_đi",
@@ -139,13 +141,27 @@ MODULES = [
     ("/api/swift-recon",           "đối chiếu SWIFT"),
     ("/api/doi_chieu_song_phuong", "đối chiếu song phương"),
     ("/api/ach",                   "đối chiếu ACH"),
+    # Dòng dài hơn PHẢI đứng trước: describe_work() khớp startswith, kết quả đầu tiên thắng —
+    # "/api/cham459901" là tiền tố chuỗi của "/api/cham459901_000000000".
+    ("/api/cham459901_000000000",  "chấm 459901-1000-000000000"),
     ("/api/cham459901",            "chấm 459901"),
+    ("/api/ilo1000",               "chấm ILO1000"),
+    ("/api/doi_chieu_osb",         "đối chiếu OSB"),
+    # -nostro phải đứng TRƯỚC: tra theo tiền tố, dòng dưới cũng khớp đường của nó
+    ("/api/doi-chieu-citad-nostro", "đối chiếu CITAD - PaymentHub"),
+    ("/api/doi-chieu-citad",       "đối chiếu CITAD cuối ngày"),
+    ("/api/doi-soat-citad",        "đối soát chênh lệch CITAD"),
+    ("/api/so-truc",               "sổ trực cuối ngày"),
+    ("/api/thi-dua",               "thi đua khen thưởng"),
+    ("/api/xep-loai",              "xếp loại lao động"),
+    ("/api/ttqt-branches",         "danh sách CN TTQT"),
     ("/api/th-reports",            "báo cáo Tổng hợp"),
     ("/api/reports",               "báo cáo hậu kiểm"),
     ("/api/departments",           "phòng ban"),
     ("/api/attendance",            "bảng chấm công"),
     ("/api/dtbb",                  "DTBB"),
     ("/api/quiz",                  "ôn tập trắc nghiệm"),
+    ("/api/surveys",               "khảo sát"),
     ("/api/vb-format",             "chuẩn hoá văn bản"),
     ("/api/hr",                    "hồ sơ nhân sự"),
     ("/api/admin/logs",            "nhật ký & sao lưu"),
@@ -153,6 +169,17 @@ MODULES = [
 # Tên cũ — còn dùng bên trong file này. Giữ alias để chỗ khác import MODULES.
 _MODULE = MODULES
 _VERB = {"POST": "Thực hiện", "PUT": "Cập nhật", "PATCH": "Cập nhật", "DELETE": "Xóa"}
+
+
+_METHOD_GHI = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _ngu_nghia(action: str) -> bool:
+    """Dòng do write_audit ghi (action là mã như 'staff_create', 'survey.create',
+    'hr.profile.update'…) — chỉ ghi SAU khi thao tác thành công. Không so với _SEMANTIC:
+    nhiều mã chưa có nhãn ở đó (survey.*, hr.*, vb_format.*) mà vẫn là thành công, và
+    _SQL_THAT_BAI (backend/api/logs.py) cũng chia theo đúng ranh giới method này."""
+    return action not in _METHOD_GHI
 
 
 def describe_work(action: str, target_type: str) -> str:
@@ -171,11 +198,14 @@ def describe_work(action: str, target_type: str) -> str:
 
 def describe_result(detail: str, action: str) -> str:
     """Dịch mã HTTP trong detail sang kết quả tiếng Việt."""
-    if action in _SEMANTIC:
+    if _ngu_nghia(action):
         return "Thành công"           # write_audit chỉ ghi khi thao tác thành công
     m = re.search(r"HTTP\s+(\d+)", detail or "")
     if not m:
-        return detail or "—"
+        # Dòng middleware mang mô tả tự viết (token Extension sai — doi_chieu_citad.py):
+        # result_ok() coi là thất bại; câu mô tả đã nằm ở cột Chi tiết, lặp lại ở ô
+        # Kết quả chỉ làm ô đó dài tràn hàng.
+        return "Thất bại" if detail else "—"
     code = int(m.group(1))
     if code < 300:
         return "Thành công"
@@ -209,9 +239,31 @@ def describe_detail(detail: str) -> str:
     return _TIEN_TO_HTTP.sub("", d).strip()
 
 
+_SO_RE = re.compile(r"/(\d+)(?=/|$)")
+
+
+def describe_target(target_type: str) -> dict | None:
+    """Hồ sơ bị tác động, suy từ đường dẫn: '/api/leaves/123/cancel' →
+    {"nhan": "nghỉ phép #123", "khoa": "/api/leaves/123"}.
+
+    `khoa` là tham số `doi_tuong` của GET /audit — bấm vào nhãn là ra toàn bộ lịch
+    sử của hồ sơ đó. Lấy số ĐẦU TIÊN trong đường dẫn nên đường nào đặt năm lên trước
+    mã hồ sơ sẽ ra nhãn "#2026"; chấp nhận vì đó vẫn là một bộ lọc đúng (mọi thao
+    tác trên cùng đường ấy), chỉ nhãn là kém nghĩa.
+    """
+    p = target_type or ""
+    m = _SO_RE.search(p)
+    if not m:
+        return None
+    ten = next((n for pre, n in _MODULE if p.startswith(pre)), None)
+    if ten is None:
+        return None
+    return {"nhan": f"{ten} #{m.group(1)}", "khoa": p[:m.end()]}
+
+
 def result_ok(detail: str, action: str) -> bool:
     """True nếu kết quả là thành công (để tô màu)."""
-    if action in _SEMANTIC:
+    if _ngu_nghia(action):
         return True
     m = re.search(r"HTTP\s+(\d+)", detail or "")
     return bool(m) and int(m.group(1)) < 300

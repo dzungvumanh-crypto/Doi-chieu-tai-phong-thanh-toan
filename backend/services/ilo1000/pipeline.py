@@ -7,6 +7,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
+import pandas as pd
+
 from backend.services.lich_lam_viec import LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich
 
 from .config import HUB_COL_SO_GD, OSB_COL_MA_GD
@@ -483,16 +485,18 @@ def main_from_dir(
     ngay: str | None = None,
     log_callback: Callable | None = None,
     cancel_event: threading.Event | None = None,
-    db: sqlite3.Connection | None = None,
+    db_path: str | None = None,
 ) -> Path | None:
     """
     Entry point: nhận thư mục chứa file đầu vào, nhóm theo ngày, xử lý từng ngày.
     Trả về Path file cuối cùng (hoặc None nếu không có output hoặc bị cancel).
 
-    `db`: nếu truyền, đọc lịch nghỉ lễ/làm bù thật (`tai_lich()`) để tính đúng
-    cửa sổ carryover cho MỌI kỳ nghỉ dài (không chỉ cuối tuần chuẩn) — xem
-    `detect.carryover_window()`. Không truyền (mặc định) => dùng `LICH_RONG`,
-    hệt hành vi cũ (chỉ theo thứ Bảy/CN).
+    `db_path`: nếu truyền, mở kết nối SQLite riêng để đọc lịch nghỉ lễ/làm bù thật
+    (`tai_lich()`) và tính đúng cửa sổ carryover cho MỌI kỳ nghỉ dài (không chỉ cuối
+    tuần chuẩn) — xem `detect.carryover_window()`. Nhận ĐƯỜNG DẪN chứ không nhận thẳng
+    `sqlite3.Connection`: hàm này chạy qua `chay_tach()` (tiến trình riêng), tham số phải
+    pickle được — Connection thì không (xem `backend/core/tien_trinh_doi_chieu.py`).
+    Không truyền (mặc định) => dùng `LICH_RONG`, hệt hành vi cũ (chỉ theo thứ Bảy/CN).
     """
     log = log_callback or (lambda msg: None)
     cancel = cancel_event or threading.Event()
@@ -500,12 +504,12 @@ def main_from_dir(
     all_paths = list(Path(input_dir).iterdir())
     log(f'Tổng file phát hiện: {len(all_paths)}')
 
-    # ── Xác định lịch nghỉ lễ thật (nếu có db) TRƯỚC khi nhóm ngày chính thức ──
+    # ── Xác định lịch nghỉ lễ thật (nếu có db_path) TRƯỚC khi nhóm ngày chính thức ──
     # Nhóm sơ bộ (lịch rỗng, không log) chỉ để biết khoảng ngày cần tra —
     # group_files_by_date() không đọc nội dung file lớn (GL02/EICP), chỉ đọc
     # 2 dòng đầu CSV citad để nhận dạng loại file, nên gọi 2 lần không tốn kém.
     lich: LichLamViec = LICH_RONG
-    if db is not None:
+    if db_path is not None:
         so_bo = group_files_by_date(all_paths, log=None)
         if so_bo:
             ngay_list = [
@@ -515,7 +519,12 @@ def main_from_dir(
             # kỳ nghỉ dài nhất thực tế (Tết) mà không phải đoán trước độ dài.
             lo = min(ngay_list) - timedelta(days=14)
             hi = max(ngay_list)
-            lich = tai_lich(db, lo, hi)
+            db = sqlite3.connect(db_path, timeout=10)
+            db.row_factory = sqlite3.Row
+            try:
+                lich = tai_lich(db, lo, hi)
+            finally:
+                db.close()
 
     day_groups = group_files_by_date(all_paths, log, lich)
     if not day_groups:

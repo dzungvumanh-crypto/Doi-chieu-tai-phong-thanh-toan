@@ -22,6 +22,7 @@ class LeaveCreate(BaseModel):
     spread_dates: Optional[List[str]] = None  # YYYY-MM-DD list khi nghỉ ngày lẻ không liên tục
     signature: Optional[SignaturePlacement] = None  # Chữ ký người đề nghị đặt ở popup xem trước
     confirm_borrow_next_year: bool = False  # Đã đồng ý ứng phép năm sau khi vượt hạn mức năm nay
+    other_deduct_quota: bool = True  # Chỉ áp dụng khi leave_type="other" — có trừ vào hạn mức phép năm không
 
 class LeaveReview(BaseModel):
     action: Literal["approve", "reject"]
@@ -34,9 +35,17 @@ class TongHopReview(BaseModel):
     comment: Optional[str] = None
 
 class LeaveOut(BaseModel):
+    """Khớp CHÍNH XÁC từng field mà _leave_row_to_dict()/_leave_to_out() ở
+    backend/api/leaves.py thực sự trả về — hiện KHÔNG có endpoint nào khai báo
+    response_model=LeaveOut (list_leaves/_leave_to_out trả dict thô), nên lệch
+    field không lỗi ngay hôm nay, nhưng nếu sau này ai thêm response_model=
+    LeaveOut vào để có docs/validate thì các field thiếu ở đây sẽ bị ÂM THẦM
+    CẮT khỏi response mà không báo lỗi gì. Sửa field ở _leave_row_to_dict thì
+    nhớ sửa luôn ở đây."""
     id: int
     staff_id: int
     staff_name: str
+    staff_role: Optional[str] = None
     department_name: Optional[str] = None
     start_date: date
     end_date: date
@@ -59,13 +68,18 @@ class LeaveOut(BaseModel):
     gd_approver_id: Optional[int] = None
     gd_approver_name: Optional[str] = None
     gd_is_pgd: bool = False              # True nếu người ký là PGĐ → hiện (TUQ)
+    gd_can_review: bool = True           # False nếu PGĐ được chỉ định hết hạn uỷ quyền
     gd_approved_at: Optional[datetime] = None
     gd_comment: Optional[str] = None
     is_direct: bool = False
+    declarer_name: str = ""              # Tên người khai báo hộ (rỗng nếu không phải is_direct)
     spread_dates: Optional[List[str]] = None
     recall_reason: Optional[str] = None
     borrow_next_year_days: float = 0.0
+    other_deduct_quota: bool = True      # Chỉ có ý nghĩa khi leave_type="other"
     created_at: datetime
+    rejected_step: Optional[Literal["KSV", "TH", "GĐ"]] = None
+    is_resubmitted: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 class LeaveActionLogOut(BaseModel):
@@ -104,6 +118,7 @@ class DirectLeaveCreate(BaseModel):
     reason: Optional[str] = None
     spread_dates: Optional[List[str]] = None
     confirm_borrow_next_year: bool = False
+    other_deduct_quota: bool = True  # Chỉ áp dụng khi leave_type="other" — có trừ vào hạn mức phép năm không
 
 class RecallCreate(BaseModel):
     reason: str

@@ -42,6 +42,7 @@ from backend.core.deps import require_feature
 from backend.schemas.doi_soat_citad import ExportAllIn, ExportIn, HistoryOut, ReconcileResultOut
 from backend.services.doi_soat_citad import exporters, parsers, reconcile, temp_files
 from backend.services.doi_soat_citad.history_service import (
+    canh_bao_lech_bat_thuong,
     get_recon_detail,
     list_recon_history,
     save_recon_history,
@@ -153,6 +154,13 @@ async def do_reconcile(
             n_khop=n_khop, lech_rows=lech,
         )
     except Exception as e:  # noqa: BLE001 — không để lỗi lưu lịch sử chặn mất kết quả đối soát
+        # Rollback TƯỜNG MINH: dòng cha và các dòng lệnh lệch nằm trong cùng một
+        # giao dịch ngầm. Hỏng giữa chừng mà chỉ nuốt lỗi thì dòng cha còn treo
+        # trong giao dịch dở — nay `_tra()` của bể kết nối huỷ nó hộ, nhưng ai đó
+        # thêm một `db.commit()` phía sau (ghi nhật ký chẳng hạn) là commit luôn
+        # dòng cha MỒ CÔI, không có lệnh lệch nào. Đừng để đúng/sai phụ thuộc vào
+        # chuyện phía dưới có commit hay không.
+        db.rollback()
         history_saved, history_error = False, str(e)
 
     return {
@@ -174,6 +182,12 @@ async def do_reconcile(
         # 1 phần file bị lỗi — phải báo cho người dùng biết kết quả có thể
         # THIẾU dữ liệu, không được coi là đối soát đầy đủ.
         "parse_warnings": errors,
+        # Cảnh báo ghép nhầm cặp file — KHÔNG chặn, chỉ báo. Người dùng mới là
+        # người biết mình vừa chọn file nào; chặn cứng thì lượt đối soát thật sự
+        # hỏng nặng lại không xem được kết quả để tìm nguyên nhân.
+        "canh_bao_bat_thuong": canh_bao_lech_bat_thuong(
+            len(lech), len(citad_rows), len(ipcas_rows), len(hub_rows)
+        ),
     }
 
 
@@ -274,13 +288,20 @@ async def get_history(
 @router.get("/history/{history_id}")
 async def get_history_detail(
     history_id: int,
+    offset: int = 0,
+    limit: int = 200,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
-    # get_recon_detail() json.loads() snapshot lech_json có thể rất lớn —
-    # đồng bộ, chặn event loop chung nếu chạy thẳng. Xem ghi chú tương tự ở
-    # do_reconcile().
-    detail = await run_heavy(get_recon_detail, db, history_id)
+    """Một trang lệnh lệch của lượt đối soát. `lech_total` cho biết tổng số dòng.
+
+    Có trần cứng cho `limit`: trước đây endpoint này trả HẾT, và một lượt đối
+    soát ghép nhầm file có 93 781 lệnh — 97 MB RAM cho mỗi lần bấm xem.
+    """
+    if offset < 0:
+        raise HTTPException(400, "offset không được âm")
+    limit = max(1, min(limit, 1000))
+    detail = await run_heavy(get_recon_detail, db, history_id, offset, limit)
     if not detail:
         raise HTTPException(404, "Không tìm thấy")
     return detail
@@ -293,8 +314,19 @@ async def export_from_history(
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
     """Sinh Excel TỪ ĐÚNG snapshot `lech` đã lưu tại thời điểm đối soát
-    (không tính lại từ file gốc) — đảm bảo đúng y hệt dữ liệu audit."""
-    detail = await run_heavy(get_recon_detail, db, history_id)
+    (không tính lại từ file gốc) — đảm bảo đúng y hệt dữ liệu audit.
+
+    Đường DUY NHẤT còn dựng cả danh sách trong RAM. `export_doiSoat()` cần
+    `len()` rồi duyệt lại 4 lượt (bảng chính + 3 sheet lọc) nên không nhận
+    generator được, mà openpyxl vốn cũng giữ trọn bảng tính trong RAM — đổi
+    riêng chỗ này sang đọc theo lô không tiết kiệm được gì. Muốn dứt điểm thì
+    phải viết lại exporters sang chế độ `write_only`; đó là việc riêng, không
+    gộp vào đây.
+
+    So với trước vẫn nhẹ hơn: bản cũ giữ ĐỒNG THỜI chuỗi JSON 19 MB và danh
+    sách đã giải nén, đỉnh ~116 MB; nay chỉ còn danh sách.
+    """
+    detail = await run_heavy(get_recon_detail, db, history_id, 0, None)
     if not detail:
         raise HTTPException(404, "Không tìm thấy")
 

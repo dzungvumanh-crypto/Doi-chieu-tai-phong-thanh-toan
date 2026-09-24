@@ -58,6 +58,19 @@ ERR_DI = {'ERPO', 'CALD'}
 PRIORITY_DI = {'SCNL': 0}
 
 
+def _ma_nh_6so(s):
+    """Chuẩn hoá 1 chuỗi mã ngân hàng về 6 SỐ CUỐI (mã chi nhánh ổn định)
+    để so được giữa CITAD (`nh_gui`, xem parsers.py::_extract_bank_group())
+    và IPCAS (`nh_nhan`) — 2 số đầu là mã CỔNG tạo báo cáo, KHÔNG ổn định
+    giữa 2 nguồn (báo cáo của cổng khác nhau ghi cùng 1 ngân hàng thật với
+    2 số đầu khác nhau — xác nhận qua dữ liệu thật 15/09/2026: khớp đúng
+    nguyên mã 95,6%, khớp thêm 1,0% sau khi bỏ 2 số đầu, chỉ còn 0,34% lệch
+    thật). Chỉ lấy CHỮ SỐ trong chuỗi, bỏ qua tên ngân hàng nếu có dính kèm
+    (viết không nhất quán, không đáng tin)."""
+    digits = ''.join(c for c in str(s or '') if c.isdigit())
+    return digits[-6:] if len(digits) >= 6 else digits
+
+
 def _ghi_chu_khop_du_nguon(cong, n_dup, n_citad, nguon, chieu_lbl):
     """Ghi_chú cho dòng ĐÃ khớp ('both') khi nguồn đối ứng (IPCAS/Hub) có
     NHIỀU HƠN `n_citad` dòng cho khoá này — đối xứng `dup_citad` (CITAD gửi
@@ -82,6 +95,38 @@ def _ghi_chu_khop_du_nguon(cong, n_dup, n_citad, nguon, chieu_lbl):
     return (
         f'{nguon} ghi nhận lệnh {chieu_lbl} này {n_dup} lần (khớp {n_citad} lần — '
         f'xem thêm {n_dup - n_citad} dòng ở nhóm Chỉ {nguon}), cổng CITAD {cong or "?"}'
+    )
+
+
+def _ghi_chu_lech_loai_kenh(loai_citad, loai_agribank):
+    """Ca thật báo 10/09/2026 (Phòng Thanh toán): CITAD và Agribank cùng 1
+    lệnh VND Đi (cùng so_gd/msgref) nhưng KHÁC trường loại lệnh (IH giá trị
+    cao / IL giá trị thấp) — không tự động khớp (đúng, vì đây là dữ liệu
+    lệch thật cần người chấm xem lại), nhưng nếu để rơi thành 2 dòng "Chỉ
+    CITAD"/"Chỉ IPCAS" trống trơn thì người chấm không biết chúng là 1 cặp.
+    Gắn ghi_chú CHÉO (câu chữ tự đổi theo đúng chiều lệch, không hardcode
+    IH trước/IL sau) lên cả 2 dòng để nối lại."""
+    return (
+        f'CITAD loại lệnh {loai_citad.upper()} nhưng Agribank loại lệnh '
+        f'{loai_agribank.upper()} — cùng số GD, nghi lệch phân loại kênh'
+    )
+
+
+def _ghi_chu_thieu_ngan_hang(ben_thieu, ma_nh, n_dong_citad, cong=None):
+    """Ghi_chú cho dòng lệch khi khoá VND Đến (txid/so_gd, loại, số tiền)
+    THẬT SỰ có ≥2 dòng CITAD trùng khoá thật (citad_den_vnd_count > 1) nên
+    phải phân biệt theo ngân hàng gửi — bug thật xác nhận dữ liệu
+    15/09/2026: txid=10008309, so_tien=500.000 — CITAD có 4 dòng/4 ngân
+    hàng gửi, IPCAS chỉ có 3 dòng/3 ngân hàng gửi; trước khi phân biệt
+    theo ngân hàng, dòng CITAD ngân hàng thứ 4 (mã 01203003) bị khớp nhầm
+    vào 1 trong 3 dòng IPCAS đại diện, biến mất hoàn toàn khỏi "Chỉ CITAD".
+    `ben_thieu` là bên KHÔNG có dòng của ngân hàng `ma_nh` ('CITAD' hoặc
+    'IPCAS') — câu chữ tự đổi theo đúng chiều thiếu, không hardcode."""
+    cong_txt = f', cổng CITAD {cong}' if cong else ''
+    return (
+        f'Khoá (số GD/txid, loại, số tiền) này CITAD có {n_dong_citad} dòng '
+        f'(nhiều ngân hàng gửi khác nhau) — {ben_thieu} không có dòng của '
+        f'ngân hàng gửi mã {ma_nh or "?"}{cong_txt}'
     )
 
 
@@ -217,6 +262,11 @@ def _dong_thua_nguon(r, chieu, so_gd_key, status, n_dup, n_citad, cong, nguon):
         'so_tien': r.get('so_tien', 0), 'ngay': r.get('ngay', ''), 'status': status,
         'key_agri': so_gd_key, 'nh_nhan': r.get('nh_nhan', ''),
         'trang_thai': r.get('trang_thai', ''),
+        # `refhub` chỉ có thật khi `nguon='IPCAS'` (Hub không parse field
+        # này) — `.get()` tự trả '' cho trường hợp Hub, không cần nhánh
+        # riêng (cùng lý do đồng nhất đã áp dụng ở nhánh Hub khớp trong
+        # run_doiSoat_ram()).
+        'refhub': r.get('refhub', ''),
     }
     ghi_chu = f'1 trong {n_dup} lần {nguon} ghi nhận lệnh này'
     if n_citad > 0:
@@ -244,6 +294,26 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     # đầu tiên thắng" thuần tuý, vì thứ tự dòng trong file không ổn định.
     ipcas_di_map = {}
     ipcas_den_map = {}
+    # Index PHỤ cho khoá VND Đến THẬT SỰ có ≥2 dòng CITAD trùng khoá thật
+    # (citad_den_vnd_count > 1, đếm ở dưới) — tra theo (txid, loai, so_tien,
+    # mã_nh_6so) thay vì 1 đại diện duy nhất như ipcas_den_map. Xây cho MỌI
+    # dòng Đến (không chỉ khoá đang trùng) vì thời điểm này chưa tính được
+    # citad_den_vnd_count (đếm ở vòng sau) — chỉ tốn bộ nhớ nhỏ, CHỈ được
+    # tra cứu khi thực sự cần (xem vòng lặp chính / vòng lặp "dư" bên dưới).
+    # KHÔNG THAY THẾ ipcas_den_map — khoá <=1 dòng CITAD vẫn dùng map chính
+    # y hệt trước giờ. Bug thật xác nhận dữ liệu 15/09/2026: txid=10008309,
+    # so_tien=500.000 — CITAD có 4 dòng/4 ngân hàng gửi, IPCAS chỉ 3 dòng/3
+    # ngân hàng gửi; 1 đại diện duy nhất của ipcas_den_map khớp NHẦM với cả
+    # 4 dòng CITAD, dòng ngân hàng thứ 4 (không có bên IPCAS) biến mất
+    # hoàn toàn khỏi "Chỉ CITAD" thay vì tự hiện ra.
+    ipcas_den_map_by_bank = {}
+    # Dòng IPCAS SCNL nhưng thiếu ngày kênh trả (`nkt_thieu`, xem
+    # parsers.py) — KHÔNG cho vào `ipcas_di_map` (không được tự động khớp,
+    # đúng ý gốc 27/08/2026) nhưng vẫn giữ riêng ở đây để lấy `refhub` khi
+    # ghép vào dòng "Chỉ CITAD" tương ứng (xác nhận Phòng Thanh toán
+    # 09/09/2026: case này lệnh RẤT CÓ THỂ vẫn tồn tại ở Agribank, không
+    # giống "Chỉ CITAD" thường — người chấm cần refhub để tự tra cứu).
+    ipcas_di_nkt_thieu_map = {}
     # Đếm theo khoá MỊN (_ipcas_identity_key, xem docstring) — "dòng này bị
     # lặp lại y hệt bao nhiêu lần", KHÔNG PHẢI đếm theo khoá khớp lệnh thô
     # (msgref / txid+loai+so_tien) ở map bên dưới. Hai việc khác nhau: map
@@ -252,11 +322,25 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     # phải dùng khoá mịn để không hiểu nhầm 2 lệnh thật khác nhau là trùng.
     ipcas_identity_count = {}
     for r in ipcas_rows:
-        ik = _ipcas_identity_key(r)
-        ipcas_identity_count[ik] = ipcas_identity_count.get(ik, 0) + 1
+        # Loại `nkt_thieu` khỏi đếm khoá mịn (09/09/2026, phát hiện qua rà
+        # soát): dòng này KHÔNG tham gia khớp lệnh (bị loại khỏi
+        # ipcas_di_map ngay dưới đây), giữ nguyên hành vi CŨ trước khi có cờ
+        # `nkt_thieu` — lúc đó dòng này còn bị `continue` ngay ở parsers.py
+        # nên chưa từng vào tới đây. Nếu không loại, dòng nkt_thieu có thể
+        # trùng khoá mịn với 1 dòng KHỚP khác (msgref khác — khoá mịn cố ý
+        # không có msgref) và làm dòng khớp đó bị tính dư 1 lần "trùng":
+        # vừa sai ghi_chú "IPCAS ghi nhận N lần", vừa sinh thêm 1 dòng "Chỉ
+        # IPCAS" ma ở khoá không liên quan — trong khi dòng nkt_thieu đã tự
+        # có đại diện đúng riêng (dòng "Chỉ CITAD" kèm refhub, xem bên dưới).
+        if not r.get('nkt_thieu'):
+            ik = _ipcas_identity_key(r)
+            ipcas_identity_count[ik] = ipcas_identity_count.get(ik, 0) + 1
         if r['chieu'] == 'di':
             k = r['msgref']
             if not k:
+                continue
+            if r.get('nkt_thieu'):
+                ipcas_di_nkt_thieu_map.setdefault(k, r)
                 continue
             if k not in ipcas_di_map:
                 ipcas_di_map[k] = r
@@ -295,6 +379,19 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 new_pri = PRIORITY_TT.get(r['trang_thai'], 99)
                 if new_pri < cur_pri:
                     ipcas_den_map[k] = r
+
+            # Index phụ theo ngân hàng gửi — xem định nghĩa
+            # ipcas_den_map_by_bank ở trên. Dùng CHUNG logic ưu tiên
+            # PRIORITY_TT như map chính (cặp CGBR/RFED của CÙNG 1 ngân
+            # hàng vẫn phải gộp đúng về 1 dòng gốc, giống hệt map chính).
+            kb = k + (_ma_nh_6so(r.get('nh_nhan', '')),)
+            if kb not in ipcas_den_map_by_bank:
+                ipcas_den_map_by_bank[kb] = r
+            else:
+                cur_pri_b = PRIORITY_TT.get(ipcas_den_map_by_bank[kb]['trang_thai'], 99)
+                new_pri_b = PRIORITY_TT.get(r['trang_thai'], 99)
+                if new_pri_b < cur_pri_b:
+                    ipcas_den_map_by_bank[kb] = r
 
     # Build map Hub — đếm theo khoá MỊN (_hub_identity_key) như IPCAS ở
     # trên, áp dụng chung cho ngoại tệ theo đúng yêu cầu: cơ chế phát hiện
@@ -345,12 +442,18 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     citad_matched_den_ipcas = set()
     citad_matched_di_hub = set()
     citad_matched_den_hub = set()
+    # Cặp (khoá_đến, mã_nh_6so) ĐÃ khớp ở vòng lặp chính khi khoá có ≥2
+    # dòng CITAD trùng — dùng để: (a) loại vòng lặp "IPCAS Đến dư" cũ (dựa
+    # trên identity-count/1 đại diện, không còn đúng cho các khoá này), (b)
+    # tính "dư theo ngân hàng" ở vòng lặp MỚI (xem bên dưới).
+    citad_matched_den_ipcas_bank = set()
     # Cổng CITAD của lệnh ĐÃ khớp, theo đúng khoá của map tương ứng — dùng
     # để ghi rõ "cổng CITAD nào" khi nguồn đối ứng (IPCAS/Hub) hạch toán
     # trùng lệnh này (xem _dong_thua_nguon() ở trên và 2 vòng lặp "dư" bên
     # dưới). CITAD luôn có field 'cong' bất kể loại tiền.
     citad_cong_di = {}
     citad_cong_den = {}
+    citad_cong_den_bank = {}  # như citad_cong_den nhưng khoá theo ngân hàng
     citad_cong_hub_di = {}
     citad_cong_hub_den = {}
 
@@ -381,11 +484,17 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     # Đến/ngoại tệ bằng dữ liệu thật, giống cách ca Đi đã được xác nhận.
     di_vnd_count = {}
     di_vnd_congs = {}
+    # so_gd -> loai (IH/IL) của CITAD, chỉ VND Đi — dùng để phát hiện lệch
+    # loại kênh khi msgref khớp nhưng loai khác nhau (xem nhánh CITAD Đi và
+    # vòng lặp "IPCAS Đi dư" bên dưới, _ghi_chu_lech_loai_kenh()), KHÔNG
+    # dùng để khớp lệnh.
+    citad_di_vnd_loai = {}
     for r in citad_rows:
         if r['chieu'] == 'di' and r['loai_tien'] == 'VND':
             k = r['so_gd']
             di_vnd_count[k] = di_vnd_count.get(k, 0) + 1
             di_vnd_congs.setdefault(k, []).append(r.get('cong') or '?')
+            citad_di_vnd_loai.setdefault(k, r['loai'])
     di_vnd_seen = set()
 
     # Đếm số dòng CITAD THẬT theo khoá khớp lệnh — dùng để tính đúng số
@@ -403,6 +512,10 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     # dòng CITAD trùng đã bị lọc riêng thành `dup_citad` ở trên
     # (di_vnd_seen) — mỗi khoá matched luôn ứng đúng 1 dòng CITAD thật.
     citad_den_vnd_count = {}
+    # (so_gd, loai, so_tien, nh_gui_6so) -> số dòng CITAD thật CÙNG ngân
+    # hàng — dùng khi citad_den_vnd_count[k] > 1 (xem vòng lặp chính nhánh
+    # Đến VND bên dưới).
+    citad_den_vnd_bank_count = {}
     citad_hub_di_count = {}
     citad_hub_den_count = {}
     for r in citad_rows:
@@ -410,6 +523,8 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             if r['chieu'] == 'den':
                 k = (r['so_gd'], r['loai'], r['so_tien'])
                 citad_den_vnd_count[k] = citad_den_vnd_count.get(k, 0) + 1
+                kb = k + (_ma_nh_6so(r.get('nh_gui', '')),)
+                citad_den_vnd_bank_count[kb] = citad_den_vnd_bank_count.get(kb, 0) + 1
         elif r['chieu'] == 'di':
             citad_hub_di_count[r['so_gd']] = citad_hub_di_count.get(r['so_gd'], 0) + 1
         else:
@@ -428,6 +543,13 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 row = {
                     **r, 'status': 'both', 'key_agri': m.get('so_gd', sogd),
                     'nh_nhan': m.get('nh_nhan', ''), 'trang_thai': '',
+                    # Hub hiện KHÔNG parse `refhub` (field chỉ có ở
+                    # _parse_ipcas_text) nên luôn ra '' ở nhánh này — giữ
+                    # dòng này cho ĐỒNG NHẤT với 2 nhánh IPCAS phía dưới
+                    # (cứ dòng nào có refhub thì hiện, không hardcode loại
+                    # trừ riêng ngoại tệ), tự động hiện đúng nếu sau này Hub
+                    # có thêm field này.
+                    'refhub': m.get('refhub', ''),
                 }
                 n_dup_m = hub_identity_count.get(_hub_identity_key(m), 1)
                 if chieu == 'di':
@@ -459,7 +581,19 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             di_vnd_seen.add(sogd)
             # VND Đi: tìm theo msgref
             m = ipcas_di_map.get(sogd)
-            if m:
+            if m and m['loai'] != r['loai']:
+                # Lệch loại kênh IH/IL (ca thật báo 10/09/2026, Phòng Thanh
+                # toán) — msgref khớp (CÙNG 1 lệnh) nhưng CITAD/IPCAS ghi
+                # khác nhau trường loại lệnh. KHÔNG coi là khớp (dữ liệu
+                # lệch thật, cần người chấm xem lại) — nhưng KHÔNG đánh dấu
+                # vào `citad_matched_di_ipcas` để dòng IPCAS này vẫn tự hiện
+                # đúng thành "Chỉ IPCAS" (kèm ghi_chú chéo) ở vòng lặp
+                # "IPCAS Đi dư" bên dưới thay vì bị coi là đã xử lý xong.
+                # Xem _ghi_chu_lech_loai_kenh().
+                row = {**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''}
+                row['ghi_chu'] = _ghi_chu_lech_loai_kenh(r['loai'], m['loai'])
+                lech.append(row)
+            elif m:
                 citad_matched_di_ipcas.add(sogd)
                 citad_cong_di[sogd] = r.get('cong')
                 tt = m.get('trang_thai', '')
@@ -469,6 +603,13 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                     row = {
                         **r, 'status': 'both', 'key_agri': m.get('msgref', sogd),
                         'nh_nhan': m.get('nh_nhan', ''), 'trang_thai': tt,
+                        # `refhub` chỉ có ở dòng gốc IPCAS (`m`), không có ở
+                        # `r` (CITAD) — chép qua đây để cột "Số RefHub" ở
+                        # exporters.py hiện ĐÚNG cho mọi lệnh có refhub, kể cả
+                        # đã khớp (yêu cầu Phòng Thanh toán 09/09/2026, trước
+                        # đó dòng khớp luôn trống vì merge không chép field
+                        # này — chỉ dòng "Chỉ Agribank" chưa khớp mới có).
+                        'refhub': m.get('refhub', ''),
                     }
                     ghi_chu = _ghi_chu_khop_du_nguon(
                         r.get('cong'), ipcas_identity_count.get(_ipcas_identity_key(m), 1), 1,
@@ -484,6 +625,12 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                         'key_agri': m.get('msgref', sogd),
                         'nh_nhan': m.get('nh_nhan', ''),
                         'trang_thai': tt,
+                        # Bug thật (rà soát 10/09/2026): PR#82 chép refhub cho
+                        # 3 nhánh 'both'/'only_citad' (nkt_thieu)/'only_ipcas'
+                        # nhưng sót đúng nhánh này — trong khi đây MỚI là nhóm
+                        # cần refhub nhất (IPCAS có lệnh nhưng chưa xong trạng
+                        # thái, người chấm bắt buộc phải tự tra Agribank).
+                        'refhub': m.get('refhub', ''),
                     }
                     ghi_chu_parts = []
                     if tt in ERR_DI:
@@ -505,22 +652,75 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                         row['ghi_chu'] = ' | '.join(ghi_chu_parts)
                     lech.append(row)
             else:
-                lech.append({**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''})
+                row = {**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''}
+                # Case đặc biệt (xác nhận Phòng Thanh toán 09/09/2026): lệnh
+                # này rơi vào "Chỉ CITAD" KHÔNG PHẢI vì IPCAS thật sự không
+                # có — mà vì IPCAS báo SCNL nhưng thiếu ngày kênh trả nên bị
+                # loại khỏi diện tự động khớp (xem `nkt_thieu` ở parsers.py).
+                # Lệnh RẤT CÓ THỂ vẫn tồn tại ở Agribank — gắn refhub để
+                # người chấm tự tra cứu, không để trống như "Chỉ CITAD" thường.
+                nkt_thieu_row = ipcas_di_nkt_thieu_map.get(sogd)
+                if nkt_thieu_row:
+                    row['refhub'] = nkt_thieu_row.get('refhub', '')
+                lech.append(row)
 
         else:
-            # VND Đến: giữ nguyên như cũ, không check trạng thái — khoá tra
-            # cứu (sogd, loai, so_tien) khớp đúng cách build ipcas_den_map()
-            # ở trên. Lệch số tiền dù trùng so_gd/txid+loai giờ KHÔNG còn
-            # tính khớp nhầm — rơi xuống nhánh else, tự hiện ra ở nhóm "chỉ
-            # CITAD" (và phía IPCAS tương ứng hiện ở "chỉ IPCAS" vì không
-            # dòng CITAD nào khớp đúng khoá của nó).
+            # VND Đến: khoá tra cứu (sogd, loai, so_tien) khớp đúng cách
+            # build ipcas_den_map() ở trên. Lệch số tiền dù trùng so_gd/
+            # txid+loai giờ KHÔNG còn tính khớp nhầm — rơi xuống nhánh else,
+            # tự hiện ra ở nhóm "chỉ CITAD" (và phía IPCAS tương ứng hiện ở
+            # "chỉ IPCAS" vì không dòng CITAD nào khớp đúng khoá của nó).
             k_den = (sogd, r['loai'], r['so_tien'])
+
+            # Bug thật xác nhận dữ liệu 15/09/2026 (txid/so_gd=10008309,
+            # so_tien=500.000): 1 dòng đại diện IPCAS (ipcas_den_map) không
+            # đủ phân biệt khi khoá này THẬT SỰ có ≥2 dòng CITAD trùng khoá
+            # thật (citad_den_vnd_count — biến có sẵn, KHÔNG đoán) — CITAD
+            # 4 dòng/4 ngân hàng gửi, IPCAS chỉ 3 dòng/3 ngân hàng gửi, dòng
+            # CITAD ngân hàng thứ 4 bị khớp nhầm vào 1 trong 3 dòng IPCAS,
+            # biến mất khỏi "Chỉ CITAD". Khi khoá CHỈ có 1 dòng CITAD (99%+
+            # trường hợp) — GIỮ NGUYÊN 100% code cũ ở nhánh `else` bên dưới,
+            # KHÔNG rẽ nhánh, không đổi hành vi.
+            if citad_den_vnd_count.get(k_den, 1) > 1:
+                nh_gui_6so = _ma_nh_6so(r.get('nh_gui', ''))
+                kb = k_den + (nh_gui_6so,)
+                m = ipcas_den_map_by_bank.get(kb)
+                if m:
+                    n_khop += 1
+                    row = {
+                        **r, 'status': 'both', 'key_agri': m.get('txid', sogd),
+                        'nh_nhan': m.get('nh_nhan', ''), 'trang_thai': m.get('trang_thai', ''),
+                        'refhub': m.get('refhub', ''),
+                    }
+                    citad_cong_den_bank[kb] = r.get('cong')
+                    # Dùng CHUNG _ghi_chu_khop_du_nguon() như nhánh bình
+                    # thường bên dưới — chỉ khác PHẠM VI đếm: n_citad tính
+                    # THEO NGÂN HÀNG (citad_den_vnd_bank_count), không phải
+                    # theo cả khoá (citad_den_vnd_count) — mỗi ngân hàng là
+                    # 1 nhóm con độc lập, dùng đếm riêng của nhóm đó.
+                    ghi_chu = _ghi_chu_khop_du_nguon(
+                        r.get('cong'), ipcas_identity_count.get(_ipcas_identity_key(m), 1),
+                        citad_den_vnd_bank_count.get(kb, 1), 'IPCAS', 'đến')
+                    if ghi_chu:
+                        row['ghi_chu'] = ghi_chu
+                    khop.append(row)
+                    citad_matched_den_ipcas_bank.add(kb)
+                else:
+                    row = {**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''}
+                    row['ghi_chu'] = _ghi_chu_thieu_ngan_hang(
+                        'IPCAS', nh_gui_6so, citad_den_vnd_count.get(k_den), r.get('cong'))
+                    lech.append(row)
+                continue
+
             m = ipcas_den_map.get(k_den)
             if m:
                 n_khop += 1
                 row = {
                     **r, 'status': 'both', 'key_agri': m.get('txid', sogd),
                     'nh_nhan': m.get('nh_nhan', ''), 'trang_thai': m.get('trang_thai', ''),
+                    # Chép `refhub` từ dòng IPCAS đã khớp — xem ghi chú ở
+                    # nhánh VND Đi phía trên, cùng lý do.
+                    'refhub': m.get('refhub', ''),
                 }
                 citad_cong_den[k_den] = r.get('cong')
                 ghi_chu = _ghi_chu_khop_du_nguon(
@@ -553,12 +753,26 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             # 'so_gd' để trống — xem ghi chú tương tự trong _dong_thua_nguon():
             # "Chỉ IPCAS" nghĩa là CITAD không có lệnh này, cột "Số GD (CITAD)"
             # không nên hiện số nào.
-            lech.append({
+            only_ipcas_row = {
                 'so_gd': '', 'dich_vu': r.get('kenh', ''), 'loai': r.get('loai', ''),
                 'chieu': 'di', 'loai_tien': 'VND', 'so_tien': r.get('so_tien', 0),
                 'ngay': r.get('ngay', ''), 'status': 'only_ipcas',
                 'key_agri': k, 'nh_nhan': r.get('nh_nhan', ''), 'trang_thai': r.get('trang_thai', ''),
-            })
+                # `refhub` — dict này liệt kê tường minh từng field thay vì
+                # `**r` nên thiếu field mới thêm sau (bug thật, phát hiện qua
+                # ảnh chụp thật 09/09/2026: dòng "Chỉ IPCAS" — đúng nơi
+                # refhub có sẵn 100% — lại trống trơn). `r` ở đây CHÍNH LÀ
+                # dòng gốc IPCAS nên field này luôn có sẵn, không cần đi qua
+                # đâu khác như 3 nhánh 'both' ở trên.
+                'refhub': r.get('refhub', ''),
+            }
+            # Chiều ngược lại của check ở nhánh CITAD phía trên — cùng
+            # 1 khoá `k` (msgref == so_gd khi thật sự cùng lệnh), xem
+            # _ghi_chu_lech_loai_kenh().
+            loai_citad = citad_di_vnd_loai.get(k)
+            if loai_citad and loai_citad != r['loai']:
+                only_ipcas_row['ghi_chu'] = _ghi_chu_lech_loai_kenh(loai_citad, r['loai'])
+            lech.append(only_ipcas_row)
         # n_citad: VND Đi luôn đúng 1 khi matched (CITAD trùng đã lọc riêng
         # thành dup_citad ở trên) — trừ thêm 1 khi KHÔNG matched vì dòng
         # "chỉ IPCAS" đại diện đã được sinh riêng ở nhánh `if not matched`
@@ -587,6 +801,14 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     # trạng thái nào" — không có CITAD khớp thì luôn phải hiện, bất kể
     # PYED/PYEK/RFED/SBSC hay gì khác.
     for k, r in ipcas_den_map.items():
+        # Khoá có ≥2 dòng CITAD trùng khoá thật (citad_den_vnd_count) đã
+        # được xử lý RIÊNG theo từng ngân hàng ở vòng lặp chính (nhánh Đến
+        # VND) và vòng lặp "IPCAS Đến dư — theo ngân hàng" MỚI ngay dưới —
+        # xem bug thật 15/09/2026. Cách tính "dư" cũ dựa trên identity-
+        # count/1 dòng đại diện (`r`) KHÔNG còn đúng cho các khoá này (`r`
+        # ở đây chỉ là 1 trong nhiều ngân hàng, tính theo nó sẽ sai).
+        if citad_den_vnd_count.get(k, 1) > 1:
+            continue
         n_dup = ipcas_identity_count.get(_ipcas_identity_key(r), 1)
         matched = k in citad_matched_den_ipcas
         excluded = False
@@ -596,6 +818,7 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 'chieu': 'den', 'loai_tien': 'VND', 'so_tien': r.get('so_tien', 0),
                 'ngay': r.get('ngay', ''), 'status': 'only_ipcas',
                 'key_agri': k[0], 'nh_nhan': r.get('nh_nhan', ''), 'trang_thai': r.get('trang_thai', ''),
+                'refhub': r.get('refhub', ''),  # xem ghi chú nhánh Đi phía trên
             })
         # n_citad = số dòng CITAD Đến THẬT trùng khoá này (có thể > 1 — xem
         # ghi chú citad_den_vnd_count ở đầu hàm), KHÔNG giả định luôn là 1.
@@ -603,6 +826,44 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
         so_thua = max(n_dup - n_citad - (0 if matched else 1), 0)
         if so_thua > 0:
             cong = citad_cong_den.get(k) if matched else None
+            for _ in range(so_thua):
+                lech.append(_dong_thua_nguon(r, 'den', k[0], 'only_ipcas', n_dup, n_citad, cong, 'IPCAS'))
+
+    # IPCAS Đến dư — THEO NGÂN HÀNG GỬI, phần "bù" cho vòng lặp trên (vòng
+    # trên chủ động BỎ QUA các khoá citad_den_vnd_count > 1). Xem bug thật
+    # 15/09/2026 ở nhánh Đến VND của vòng lặp chính. Dùng CHUNG công thức
+    # so_thua/_dong_thua_nguon() như vòng lặp cũ, chỉ thu hẹp phạm vi đếm
+    # xuống TỪNG (khoá, ngân hàng) thay vì cả khoá — khi 1 khoá chỉ có 1
+    # "nhóm ngân hàng" (vd ngân hàng rỗng/không phân biệt được), công thức
+    # này TỰ SUY BIẾN về đúng kết quả vòng lặp cũ (đã kiểm bằng test
+    # test_vnd_den_citad_trung_2_dong_ipcas_trung_3_dong_chi_du_1).
+    #
+    # CHƯA xử lý trùng lặp NHIỀU dòng CÙNG 1 ngân hàng bên trong 1 khoá đã
+    # đa-ngân-hàng (vd 1 ngân hàng gửi 2 dòng thật trong khi khoá đã có ≥2
+    # ngân hàng khác) — case thật xác nhận (10008309) là 4 ngân hàng PHÂN
+    # BIỆT, không có ngân hàng nào trùng lặp bên trong nhóm. Mở rộng thêm
+    # cần xác nhận nghiệp vụ bằng dữ liệu thật trước, theo đúng nguyên tắc
+    # thận trọng đã áp dụng cho cả module này (xem docstring đầu file).
+    for kb, r in ipcas_den_map_by_bank.items():
+        k = kb[:3]
+        if citad_den_vnd_count.get(k, 1) <= 1:
+            continue
+        n_dup = ipcas_identity_count.get(_ipcas_identity_key(r), 1)
+        matched = kb in citad_matched_den_ipcas_bank
+        if not matched:
+            row = {
+                'so_gd': '', 'dich_vu': r.get('kenh', ''), 'loai': r.get('loai', ''),
+                'chieu': 'den', 'loai_tien': 'VND', 'so_tien': r.get('so_tien', 0),
+                'ngay': r.get('ngay', ''), 'status': 'only_ipcas',
+                'key_agri': k[0], 'nh_nhan': r.get('nh_nhan', ''), 'trang_thai': r.get('trang_thai', ''),
+                'refhub': r.get('refhub', ''),
+            }
+            row['ghi_chu'] = _ghi_chu_thieu_ngan_hang('CITAD', kb[3], citad_den_vnd_count.get(k))
+            lech.append(row)
+        n_citad = citad_den_vnd_bank_count.get(kb, 0) if matched else 0
+        so_thua = max(n_dup - n_citad - (0 if matched else 1), 0)
+        if so_thua > 0:
+            cong = citad_cong_den_bank.get(kb) if matched else None
             for _ in range(so_thua):
                 lech.append(_dong_thua_nguon(r, 'den', k[0], 'only_ipcas', n_dup, n_citad, cong, 'IPCAS'))
 

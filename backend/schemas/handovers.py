@@ -30,6 +30,8 @@ class GridResponse(BaseModel):
     users: List[StaffOut]
     entries: List[GridEntryOut]
     days_in_month: int
+    # Ngày trong tháng là ngày nghỉ lễ (1..days_in_month) — lưới tô vàng như T7/CN
+    holidays: List[int] = []
 
 class EntryUpsertRequest(BaseModel):
     staff_id: int
@@ -49,6 +51,10 @@ class RejectRequest(BaseModel):
 
 class ReturnToStaffRequest(BaseModel):
     reason: str
+
+class NoteRequest(BaseModel):
+    # Chuỗi rỗng = xoá ghi chú (vẫn ghi một dòng lịch sử)
+    note: str = Field(max_length=1000)
 
 
 # ─── Entry History ────────────────────────────────────────────────────────────
@@ -72,6 +78,9 @@ class EntryHistoryOut(BaseModel):
     current_status: str
     current_status_label: str
     borrow_reason: Optional[str] = None
+    note: Optional[str] = None
+    note_by_name: Optional[str] = None  # người sửa ghi chú gần nhất
+    note_at: Optional[str] = None       # "HH:MM  DD/MM/YYYY"
     logs: List[EntryHistoryItem]
 
 

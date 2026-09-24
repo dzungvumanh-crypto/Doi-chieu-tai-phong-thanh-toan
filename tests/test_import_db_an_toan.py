@@ -195,3 +195,60 @@ def test_qtv_cap_2_khong_dung_duoc_tai_khoan_qtv_cap_1(conn, tmp_path):
     assert r.json()["updated"] == 0
     assert len(r.json()["skipped"]) == 1
     assert _lay(conn, "AD001", "pwd_hash") == "hash-that"
+
+
+# ── 5. Tên cột trong file không được thành mã SQL ─────────────────────────────
+
+def _file_db_cot(tmp_path, cols: list[str], rows) -> bytes:
+    """File .db với tên cột TUỲ Ý (kể cả tên chứa dấu nháy / dấu phẩy)."""
+    p = tmp_path / "doc.db"
+    con = sqlite3.connect(str(p))
+    ten = ", ".join('"' + c.replace('"', '""') + '" TEXT' for c in cols)
+    con.execute(f"CREATE TABLE user_tttt ({ten})")
+    con.executemany(
+        f"INSERT INTO user_tttt VALUES ({','.join('?' * len(cols))})", rows)
+    con.commit()
+    con.close()
+    return p.read_bytes()
+
+
+def _them_qtv_cap_2(conn):
+    conn.execute(
+        "INSERT INTO user_tttt (id, employee_code, full_name, role, username, pwd_hash) "
+        "VALUES (2, 'L2', 'Quản trị cấp 2', 'admin_l2', 'l2', 'h')"
+    )
+    conn.commit()
+
+
+def test_ten_cot_doc_khong_nang_duoc_quyen(conn, tmp_path):
+    """Cột tên `role='admin', full_name` từng ghép thành `SET role='admin', full_name = ?`
+    — QTV cấp 2 tự nâng mình lên cấp 1 (tái hiện 23/09/2026)."""
+    _them_qtv_cap_2(conn)
+    data = _file_db_cot(tmp_path, ["employee_code", "role='admin', full_name"],
+                        [("L2", "Quản trị cấp 2")])
+    r = _post(_client(conn, StaffRole.ADMIN_L2, uid=2), data)
+    assert r.status_code == 200, r.text
+    assert _lay(conn, "L2", "role") == "admin_l2"
+    assert r.json()["ignored_columns"] == ["role='admin', full_name"]
+
+
+def test_cot_role_viet_hoa_khong_lach_duoc_kiem_tra(conn, tmp_path):
+    """SQLite coi `ROLE` là cột `role`, nhưng `"role" in cols` thì False — bước
+    kiểm vai trò bị bỏ qua. Cột không trùng ĐÚNG tên phải bị bỏ."""
+    _them_qtv_cap_2(conn)
+    data = _file_db_cot(tmp_path, ["employee_code", "ROLE"], [("L2", "admin")])
+    r = _post(_client(conn, StaffRole.ADMIN_L2, uid=2), data)
+    assert r.status_code == 200, r.text
+    assert _lay(conn, "L2", "role") == "admin_l2"
+    assert r.json()["ignored_columns"] == ["ROLE"]
+
+
+def test_cot_la_khong_lam_hong_cot_dung(conn, tmp_path):
+    """Cột lạ bị bỏ, các cột đúng tên trên cùng dòng vẫn được ghi."""
+    data = _file_db_cot(tmp_path, ["employee_code", "full_name", "cot_he_thong_cu"],
+                        [("NV007", "Tên Mới", "x")])
+    r = _post(_client(conn), data)
+    assert r.status_code == 200, r.text
+    assert r.json()["updated"] == 1
+    assert r.json()["skipped"] == []
+    assert _lay(conn, "NV007", "full_name") == "Tên Mới"

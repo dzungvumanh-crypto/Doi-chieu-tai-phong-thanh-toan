@@ -66,6 +66,19 @@ def test_vnd_di_khop_scnl():
     assert khop[0]['status'] == 'both'
 
 
+def test_vnd_di_khop_chep_refhub_tu_ipcas():
+    """Bug thật (review 09/09/2026, ảnh chụp thật): dòng ĐÃ KHỚP trước đây
+    trống cột "Số RefHub" dù lệnh CÓ tồn tại ở Agribank — vì dòng 'both'
+    được dựng từ `{**r, ...}` (r = CITAD, không có refhub), chỉ chép đúng
+    3 field key_agri/nh_nhan/trang_thai từ `m` (IPCAS), bỏ sót refhub. `m`
+    (IPCAS) LUÔN có field này (`_parse_ipcas_text`) nên phải chép qua."""
+    citad = [_citad('100005', chieu='di')]
+    ipcas = [_ipcas(chieu='di', msgref='100005', trang_thai='SCNL', refhub='RH-DI-100005')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 1
+    assert khop[0]['refhub'] == 'RH-DI-100005'
+
+
 def test_vnd_di_lech_trang_thai_khong_scnl():
     citad = [_citad('100002', chieu='di')]
     ipcas = [_ipcas(chieu='di', msgref='100002', trang_thai='WFPG')]
@@ -105,6 +118,117 @@ def test_vnd_di_erpo_voi_citad_la_bat_thuong():
     assert 'kiểm tra lại' in lech[0]['ghi_chu']
 
 
+def test_lech_trang_thai_cung_giu_refhub():
+    """Bug thật (rà soát 10/09/2026, ghi trong Implementation-notes.html card
+    127 — "chưa làm, biết mà để lại" từ PR#82): dòng 'lech_trang_thai' (IPCAS
+    CÓ lệnh nhưng chưa SCNL) bị bỏ sót khi PR#82 chép refhub cho 3 nhánh kia
+    ('both'/'only_citad' nkt_thieu/'only_ipcas'). Đây lại chính là nhóm cần
+    refhub nhất — IPCAS có lệnh nhưng chưa xong, người chấm bắt buộc phải tự
+    tra Agribank để kiểm tra trạng thái thật."""
+    citad = [_citad('970001', chieu='di')]
+    ipcas = [_ipcas(chieu='di', msgref='970001', trang_thai='WFPG',
+                     refhub='RH-LECHTT-970001')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 0
+    assert lech[0]['status'] == 'lech_trang_thai'
+    assert lech[0]['refhub'] == 'RH-LECHTT-970001'
+
+
+def test_scnl_thieu_ngay_kenh_tra_rot_vao_chi_citad_kem_refhub():
+    """Case đặc biệt (xác nhận Phòng Thanh toán 09/09/2026): IPCAS báo SCNL
+    (đã sang kênh) nhưng thiếu ngày kênh trả (`nkt_thieu=True`, xem
+    parsers.py) — KHÔNG được tự động khớp (giữ nguyên ý gốc 27/08/2026,
+    lệnh CITAD rơi đúng vào "Chỉ CITAD" để người chấm tự xác minh), nhưng
+    KHÁC "Chỉ CITAD" thường (không hề có gì bên IPCAS): lệnh này rất có thể
+    vẫn tồn tại thật ở Agribank, nên dòng "Chỉ CITAD" phải kèm `refhub` để
+    người chấm tự tra cứu, không được để trống."""
+    citad = [_citad('900001', chieu='di')]
+    ipcas = [_ipcas(chieu='di', msgref='900001', trang_thai='SCNL',
+                     refhub='RH-NKTTHIEU-900001', nkt_thieu=True)]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 0
+    assert khop == []
+    assert len(lech) == 1
+    assert lech[0]['status'] == 'only_citad'
+    assert lech[0]['refhub'] == 'RH-NKTTHIEU-900001'
+
+
+def test_nkt_thieu_khong_lam_dong_khop_khac_bi_tinh_nham_la_trung():
+    """Bug thật (rà soát 09/09/2026, phát hiện sau khi thêm cờ `nkt_thieu`):
+    dòng IPCAS 'di' SCNL-thiếu-ngày-kênh-trả trước đây bị `continue` ngay ở
+    parsers.py — KHÔNG BAO GIỜ vào `ipcas_identity_count`. Từ khi giữ lại
+    dòng này (nkt_thieu=True) để lấy refhub, nó vẫn CỘNG VÀO
+    `ipcas_identity_count` theo khoá mịn (khoá này KHÔNG có msgref) — nếu
+    tình cờ trùng khoá mịn với 1 dòng KHỚP khác (msgref khác), dòng khớp
+    kia bị tính nhầm "IPCAS ghi nhận 2 lần" và còn sinh thêm 1 dòng "Chỉ
+    IPCAS" ma không có thật, trong khi dòng nkt_thieu đã tự có đại diện
+    đúng riêng (dòng "Chỉ CITAD" kèm refhub) — báo trùng 2 lần cho đúng 1
+    chênh lệch."""
+    citad = [
+        _citad('950001', chieu='di'),  # khớp bình thường
+        _citad('950002', chieu='di'),  # rơi vào "Chỉ CITAD" vì IPCAS thiếu ngày kênh trả
+    ]
+    ipcas = [
+        _ipcas(chieu='di', msgref='950001', trang_thai='SCNL'),
+        _ipcas(chieu='di', msgref='950002', trang_thai='SCNL', nkt_thieu=True,
+               refhub='RH-950002'),
+    ]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 1
+    assert khop[0]['status'] == 'both'
+    assert not khop[0].get('ghi_chu')  # KHÔNG được báo "2 lần" sai
+    assert len(lech) == 1
+    assert lech[0]['status'] == 'only_citad'
+    assert lech[0]['refhub'] == 'RH-950002'
+    assert not any(r['status'] == 'only_ipcas' for r in lech)  # không dòng ma
+
+
+def test_vnd_di_lech_loai_kenh_ih_il_khong_tu_khop_kem_ghi_chu_cheo():
+    """Ca thật báo 10/09/2026 (Phòng Thanh toán): 1 lệnh VND Đi giống hệt
+    nhau ở CITAD và Agribank (cùng so_gd/msgref, cùng trạng thái SCNL) —
+    CHỈ khác trường loại lệnh (IH giá trị cao / IL giá trị thấp). Trước sửa
+    này, khoá khớp chỉ dùng msgref nên bị khớp "khống" (n_khop tăng nhầm),
+    không phát hiện, không cảnh báo gì. Sau sửa: KHÔNG được tự động khớp,
+    tách thành đúng 2 dòng (Chỉ CITAD + Chỉ IPCAS, KHÔNG phải
+    lech_trang_thai) — mỗi dòng phải có ghi_chú nói rõ CẢ 2 loại lệnh để
+    người chấm tự nối lại thành 1 cặp."""
+    citad = [_citad('960001', chieu='di', loai='ih')]
+    ipcas = [_ipcas(chieu='di', msgref='960001', trang_thai='SCNL', loai='il')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 0
+    assert khop == []
+    assert len(lech) == 2
+    chi_citad = [r for r in lech if r['status'] == 'only_citad'][0]
+    chi_ipcas = [r for r in lech if r['status'] == 'only_ipcas'][0]
+    assert 'IH' in chi_citad['ghi_chu'] and 'IL' in chi_citad['ghi_chu']
+    assert 'IH' in chi_ipcas['ghi_chu'] and 'IL' in chi_ipcas['ghi_chu']
+
+
+def test_vnd_di_lech_loai_kenh_chieu_nguoc_lai_ghi_chu_dung_thu_tu():
+    """Đối chứng chiều ngược lại — câu ghi_chú phải tự đổi đúng theo giá
+    trị thật 2 bên (CITAD IL/IPCAS IH), không hardcode cứng thứ tự
+    "CITAD IH...IPCAS IL" như test trên."""
+    citad = [_citad('960002', chieu='di', loai='il')]
+    ipcas = [_ipcas(chieu='di', msgref='960002', trang_thai='SCNL', loai='ih')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 0
+    assert len(lech) == 2
+    chi_citad = [r for r in lech if r['status'] == 'only_citad'][0]
+    assert 'CITAD loại lệnh IL' in chi_citad['ghi_chu']
+    assert 'Agribank loại lệnh IH' in chi_citad['ghi_chu']
+
+
+def test_vnd_di_cung_loai_kenh_van_khop_binh_thuong_khong_ghi_chu_lech():
+    """Đối chứng: CITAD và IPCAS CÙNG loại lệnh vẫn khớp bình thường như
+    trước, không có ghi_chú lệch loại kênh nào."""
+    citad = [_citad('960003', chieu='di', loai='ih')]
+    ipcas = [_ipcas(chieu='di', msgref='960003', trang_thai='SCNL', loai='ih')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 1
+    assert lech == []
+    assert 'loại lệnh' not in (khop[0].get('ghi_chu') or '')
+
+
 def test_vnd_di_erpo_khong_co_citad_bi_bo_qua():
     """ERPO/CALD mà CITAD KHÔNG có → thất bại bình thường (chưa từng đi
     kênh), không được tính vào 'chỉ IPCAS'."""
@@ -122,6 +246,17 @@ def test_vnd_den_khop_theo_txid_loai_so_tien():
     n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
     assert n_khop == 1
     assert lech == []
+
+
+def test_vnd_den_khop_chep_refhub_tu_ipcas():
+    """Cùng lỗi/cùng lý do với nhánh VND Đi — xem
+    test_vnd_di_khop_chep_refhub_tu_ipcas()."""
+    citad = [_citad('200002', chieu='den', loai='il', so_tien=5000)]
+    ipcas = [_ipcas(chieu='den', txid='200002', loai='il', so_tien=5000,
+                     trang_thai='SBSC', refhub='RH-DEN-200002')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 1
+    assert khop[0]['refhub'] == 'RH-DEN-200002'
 
 
 def test_vnd_den_txid_dung_chung_khong_de_mat_lenh_that():
@@ -312,6 +447,17 @@ def test_only_ipcas_de_trong_cot_so_gd_citad():
     assert lech[0]['status'] == 'only_ipcas'
     assert lech[0]['so_gd'] == ''
     assert lech[0]['key_agri'] == '800003'
+
+
+def test_only_ipcas_giu_dung_refhub():
+    """Bug thật (review 09/09/2026, ảnh chụp thật — đây CHÍNH LÀ trường hợp
+    trong ảnh, dòng "Chỉ IPCAS" chưa khớp): dict dòng 'only_ipcas' liệt kê
+    tường minh từng field thay vì `{**r, ...}` nên thiếu hẳn `refhub`, dù
+    `r` (dòng gốc IPCAS) LUÔN có sẵn field này."""
+    ipcas = [_ipcas(chieu='di', msgref='800004', trang_thai='SCNL', refhub='RH-ONLY-800004')]
+    n_khop, lech, khop = run_doiSoat_ram([], ipcas, [])
+    assert lech[0]['status'] == 'only_ipcas'
+    assert lech[0]['refhub'] == 'RH-ONLY-800004'
 
 
 def test_only_hub_de_trong_cot_so_gd_citad():
@@ -558,22 +704,34 @@ def test_parse_ipcas_khong_con_loc_bo_dong_trung():
     assert len(rows) == 2
 
 
-def test_parse_ipcas_scnl_khong_co_ngay_kenh_tra_bi_loai():
+def test_parse_ipcas_scnl_khong_co_ngay_kenh_tra_danh_dau_nkt_thieu():
     """Yêu cầu Phòng Thanh toán 27/08/2026: SCNL báo đã sang kênh thành công
     nhưng NGAY_KENH_TRA vẫn trống — kênh CHƯA THỰC SỰ xác nhận, không được
-    coi là khớp IPCAS thật nữa. Dòng này phải bị loại khỏi kết quả (để lệnh
-    CITAD tương ứng, nếu có, rơi vào "Chỉ CITAD" thay vì khớp khống)."""
+    coi là khớp IPCAS thật nữa (để lệnh CITAD tương ứng, nếu có, rơi vào
+    "Chỉ CITAD" thay vì khớp khống).
+
+    09/09/2026: TRƯỚC ĐÂY dòng này bị loại HẲN khỏi kết quả (`rows == []`)
+    — sửa lại theo yêu cầu Phòng Thanh toán: lệnh này rất có thể vẫn tồn
+    tại thật ở Agribank, xoá sạch làm mất luôn `refhub` (thứ người chấm cần
+    để tự tra cứu khi thấy dòng "Chỉ CITAD"). Nay GIỮ LẠI dòng, chỉ đánh
+    dấu `nkt_thieu=True` để reconcile.py biết không cho vào diện tự động
+    khớp (xem test_scnl_thieu_ngay_kenh_tra_rot_vao_chi_citad_kem_refhub
+    ở trên — hành vi đầu cuối không đổi, chỉ đổi CÁCH đạt được nó)."""
     text = (
-        "NGAY_GIAO_DICH,CHI_NHANH,TXID,SO_TIEN,TRACE,TRANG_THAI_LENH,MSGREF,KENH_THANH_TOAN,NH_NHAN,NGAY_KENH_TRA\n"
-        "19/08/2026,1000,900123,50000,TR001,SCNL,MSG900123,IL,NH TEST,\n"
+        "NGAY_GIAO_DICH,CHI_NHANH,TXID,SO_TIEN,TRACE,TRANG_THAI_LENH,MSGREF,KENH_THANH_TOAN,NH_NHAN,NGAY_KENH_TRA,REFHUB\n"
+        "19/08/2026,1000,900123,50000,TR001,SCNL,MSG900123,IL,NH TEST,,RH-900123\n"
     )
     rows = parsers._parse_ipcas_text(text, "test.csv", None)
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0]['nkt_thieu'] is True
+    assert rows[0]['refhub'] == 'RH-900123'
+    assert rows[0]['msgref'] == 'MSG900123'
 
 
 def test_parse_ipcas_scnl_co_ngay_kenh_tra_van_giu():
     """Đối chứng: SCNL có đủ NGAY_KENH_TRA vẫn phải giữ nguyên như cũ (chỉ
-    loại đúng ca thiếu NGAY_KENH_TRA, không phải loại hết mọi dòng SCNL)."""
+    đánh dấu `nkt_thieu` đúng ca thiếu NGAY_KENH_TRA, không phải mọi dòng
+    SCNL)."""
     text = (
         "NGAY_GIAO_DICH,CHI_NHANH,TXID,SO_TIEN,TRACE,TRANG_THAI_LENH,MSGREF,KENH_THANH_TOAN,NH_NHAN,NGAY_KENH_TRA\n"
         "19/08/2026,1000,900124,50000,TR002,SCNL,MSG900124,IL,NH TEST,19/08/2026\n"
@@ -581,6 +739,7 @@ def test_parse_ipcas_scnl_co_ngay_kenh_tra_van_giu():
     rows = parsers._parse_ipcas_text(text, "test.csv", None)
     assert len(rows) == 1
     assert rows[0]['msgref'] == 'MSG900124'
+    assert rows[0]['nkt_thieu'] is False
 
 
 def test_parse_ipcas_khong_co_cot_ngay_kenh_tra_khong_bi_loai_nham():
@@ -593,3 +752,60 @@ def test_parse_ipcas_khong_co_cot_ngay_kenh_tra_khong_bi_loai_nham():
     )
     rows = parsers._parse_ipcas_text(text, "test.csv", None)
     assert len(rows) == 1
+
+
+def test_vnd_den_citad_4_ngan_hang_ipcas_3_ngan_hang_khong_mat_lenh_that():
+    """Bug thật xác nhận dữ liệu 15/09/2026: txid/so_gd=10008309, so_tien=
+    500.000 — CITAD có 4 dòng thật (4 ngân hàng gửi khác nhau), IPCAS chỉ
+    có 3 dòng thật (3 ngân hàng gửi). Trước sửa: 1 dòng đại diện IPCAS duy
+    nhất (ipcas_den_map, không phân biệt ngân hàng) khớp NHẦM với CẢ 4 dòng
+    CITAD (n_khop tính thừa 4 thay vì đúng 3), dòng CITAD ngân hàng thứ 4
+    (mã 01203003) bị nuốt mất, không bao giờ hiện "Chỉ CITAD". Sau sửa: chỉ
+    3 dòng khớp đúng ngân hàng, dòng ngân hàng thứ 4 phải tự hiện "Chỉ
+    CITAD" kèm ghi_chú nêu rõ mã ngân hàng bị thiếu."""
+    citad = [
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='201001'),
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='202002'),
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='970403'),
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='203003'),  # NH khong co ben IPCAS
+    ]
+    ipcas = [
+        _ipcas(chieu='den', txid='10008309', loai='il', so_tien=500_000,
+               trang_thai='SBSC', nh_nhan='01201001'),
+        _ipcas(chieu='den', txid='10008309', loai='il', so_tien=500_000,
+               trang_thai='SBSC', nh_nhan='01202002'),
+        _ipcas(chieu='den', txid='10008309', loai='il', so_tien=500_000,
+               trang_thai='SBSC', nh_nhan='79970403'),
+    ]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 3
+    assert len(khop) == 3 and all(r['status'] == 'both' for r in khop)
+    chi_citad = [r for r in lech if r['status'] == 'only_citad']
+    assert len(chi_citad) == 1
+    assert chi_citad[0]['nh_gui'] == '203003'
+    assert '203003' in chi_citad[0]['ghi_chu']
+    assert not any(r['status'] == 'only_ipcas' for r in lech)
+
+
+def test_vnd_den_nhieu_ngan_hang_ipcas_du_1_ngan_hang_hien_chi_ipcas():
+    """Đối xứng với bug 10008309: IPCAS có thêm 1 ngân hàng CITAD không có
+    — phải hiện "Chỉ IPCAS" kèm mã ngân hàng dư (vòng lặp "IPCAS Đến dư
+    theo ngân hàng" MỚI, không bị vòng lặp cũ bỏ sót vì khoá này đã bị
+    loại khỏi vòng cũ)."""
+    citad = [
+        _citad('10009000', chieu='den', loai='il', so_tien=200_000, cong='1', nh_gui='201001'),
+        _citad('10009000', chieu='den', loai='il', so_tien=200_000, cong='1', nh_gui='202002'),
+    ]
+    ipcas = [
+        _ipcas(chieu='den', txid='10009000', loai='il', so_tien=200_000,
+               trang_thai='SBSC', nh_nhan='01201001'),
+        _ipcas(chieu='den', txid='10009000', loai='il', so_tien=200_000,
+               trang_thai='SBSC', nh_nhan='01202002'),
+        _ipcas(chieu='den', txid='10009000', loai='il', so_tien=200_000,
+               trang_thai='SBSC', nh_nhan='79970999'),  # NH thu 3, CITAD khong co
+    ]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 2
+    du = [r for r in lech if r['status'] == 'only_ipcas']
+    assert len(du) == 1
+    assert '970999' in du[0]['ghi_chu']

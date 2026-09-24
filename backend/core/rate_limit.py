@@ -17,7 +17,7 @@ thì mất lớp chống dò vào một tài khoản cụ thể — đánh đổ
 nghiệp vụ (vd. chỉ khoá theo cặp tên+máy), không tự ý đổi ở đây.
 """
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 MAX_FAILURES = 5
 WINDOW = timedelta(minutes=5)
@@ -34,12 +34,22 @@ def khoa_theo_ip(ip: str) -> str:
     return f"{_TIEN_TO_IP}{ip}"
 
 
+def _utcnow() -> datetime:
+    """Giờ UTC NAIVE — thay datetime.utcnow(), bị đánh dấu bỏ từ Python 3.12.
+
+    KHÔNG đổi sang datetime có múi giờ: bên dưới có `lu - now` và `now - ws`,
+    trong đó `lu`/`ws` do strptime sinh ra nên luôn naive. Trộn hai loại là
+    TypeError — mà đường đi đó chỉ chạy khi có tài khoản ĐANG bị khoá, nghĩa là
+    lỗi chỉ nổ lúc hệ thống đang chặn kẻ dò mật khẩu."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _utc_str(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def seconds_locked(db: sqlite3.Connection, username: str) -> int:
-    now = datetime.utcnow()
+    now = _utcnow()
     row = db.execute(
         "SELECT locked_until FROM login_rate_limit WHERE username = ?", (username,)
     ).fetchone()
@@ -53,7 +63,7 @@ def seconds_locked(db: sqlite3.Connection, username: str) -> int:
 
 def record_failed(db: sqlite3.Connection, username: str, max_failures: int = MAX_FAILURES,
                   lockout: timedelta = LOCKOUT) -> None:
-    now = datetime.utcnow()
+    now = _utcnow()
     row = db.execute(
         "SELECT attempt_count, window_start FROM login_rate_limit WHERE username = ?", (username,)
     ).fetchone()

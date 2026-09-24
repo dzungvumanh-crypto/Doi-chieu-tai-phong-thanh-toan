@@ -11,6 +11,13 @@
 // Dòng "Tổng cộng" ở cuối bảng (cùng <table> với header, không tách bảng
 // riêng) có đúng 11 <td>: ô đầu colspan=6 (gộp cột 0-5, chữ "Tổng cộng"),
 // 9 ô tiếp theo khớp field 6-14 theo ĐÚNG THỨ TỰ, ô cuối field 15 (bỏ qua).
+//
+// Trang có dropdown lọc "Loại tiền" (`#ccy`, dump console 14/09/2026: value
+// "" = Tất cả, "VND"/"USD"/"EUR") — bảng "Tổng cộng" đọc được là của ĐÚNG
+// loại tiền đang lọc, không phải luôn luôn VNĐ như trước. Phải đọc dropdown
+// này và gắn `ccy` vào mỗi item gửi lên, nếu không đổi sang USD/EUR sẽ đè
+// nhầm lên số liệu VNĐ (cùng key `ph_gtt`/`ph_gtc_truoc`/`ph_gtc_tu` cũ,
+// không phân biệt được loại tiền nào vừa quét).
 (function () {
   const SERVER_KEY = 'server';
   const TOKEN_KEY = 'extensionToken';
@@ -56,6 +63,15 @@
     };
   }
 
+  const ID_CCY = 'ccy';
+
+  function getCurrency() {
+    const sel = document.getElementById(ID_CCY);
+    if (!sel) return '';
+    const v = sel.value;
+    return (v === 'VND' || v === 'USD' || v === 'EUR') ? v : ''; // '' = "Tất cả", bỏ qua
+  }
+
   // ── Lùi thời gian thử lại khi gửi thất bại ───────────────────────────
   // Giống content_citad_nostro.js — xem comment giải thích đầy đủ ở đó.
   function _makeRetryScheduler(resetFn) {
@@ -78,16 +94,31 @@
   function run(server, token) {
     let lastKey = null;
 
+    let lastNoCcyWarnKey = null;
+
     function trySave() {
       const totals = readTongCong();
       if (!totals) return;
-      const key = JSON.stringify(totals);
+      const ccy = getCurrency();
+      if (!ccy) {
+        // Trước đây trang này LUÔN tự lưu vô điều kiện — im lặng ở đây (khác
+        // hẳn hành vi cũ) sẽ khiến người dùng tưởng đã lưu mà thực ra chưa.
+        // Chỉ toast 1 lần/tổ hợp số liệu (như trySave() thật) để không spam
+        // liên tục theo MutationObserver.
+        const warnKey = JSON.stringify(totals);
+        if (warnKey !== lastNoCcyWarnKey) {
+          lastNoCcyWarnKey = warnKey;
+          _toast('⚠ Đang lọc "Tất cả" — KHÔNG tự lưu được (không biết là VNĐ/USD/EUR). Chọn đúng 1 Loại tiền rồi thử lại.', '#f59e0b', 8000);
+        }
+        return;
+      }
+      const key = `${ccy}|${JSON.stringify(totals)}`;
       if (key === lastKey) return;
       lastKey = key;
 
       const items = ['gtt', 'gtc_truoc', 'gtc_tu'].map((loai) => ({
-        key: `ph_${loai}`,
-        loai,
+        key: `ph_${loai}_${ccy}`,
+        loai, ccy,
         soMon: totals[loai].soMon,
         soTien: totals[loai].soTien,
       }));
@@ -97,7 +128,7 @@
         (resp) => {
           if (resp && resp.ok) {
             retry.resetBackoff();
-            _toast(`✓ Tự lưu PaymentHub: GTT ${totals.gtt.soMon} món, GTC Trước15h30 ${totals.gtc_truoc.soMon} món, Từ15h30 ${totals.gtc_tu.soMon} món`);
+            _toast(`✓ Tự lưu PaymentHub (${ccy}): GTT ${totals.gtt.soMon} món, GTC Trước15h30 ${totals.gtc_truoc.soMon} món, Từ15h30 ${totals.gtc_tu.soMon} món`);
           } else if (resp && resp.status === 403) {
             // Lỗi VĨNH VIỄN — dừng hẳn, giữ nguyên lastKey (xem giải thích ở
             // content_citad_nostro.js). Trang này là bootstrap-table, DOM đổi

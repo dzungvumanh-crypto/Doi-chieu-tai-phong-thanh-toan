@@ -799,7 +799,7 @@ def build_core_thua_forward(
     # diện là pool ở round SAU (yêu cầu bắt buộc có cột 'Đối chiếu') — toàn bộ
     # tồn đọng của round này lặng lẽ biến mất khỏi pool, không log không lỗi
     # (phát hiện qua phản biện Agent vòng 2, 2026-09-13, tái lập được bằng
-    # code thật — xem docs/Implementation-notes.html card 122).
+    # code thật — xem docs/Implementation-notes.html card 165).
     if doi_chieu_col not in result.columns:
         result[doi_chieu_col] = '#N/A'
     else:

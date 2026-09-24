@@ -42,6 +42,7 @@ class KetQuaChuanHoa(BaseModel):
     doan: list[dict]
     luu_y: list[str]
     thong_ke: dict
+    soat_so: list[dict] = []
 
 
 class MauVB(BaseModel):

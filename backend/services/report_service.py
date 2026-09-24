@@ -1,17 +1,11 @@
 """Xử lý file IPCAS / Payment → sinh báo cáo hậu kiểm"""
 import io
-import os
 import sqlite3
 import zipfile
 from pathlib import Path
 import pandas as pd
 import openpyxl
-from openpyxl.styles import Font, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 
 _TEMPLATES_DIR = Path(__file__).parents[2] / 'templates'
 
@@ -33,8 +27,8 @@ def _get_month_from_date(date_str: str) -> int:
         parts = str(date_str).strip().split('/')
         if len(parts) >= 2:
             return int(parts[1])
-    except Exception:
-        pass
+    except (ValueError, TypeError):
+        pass        # ô ngày trống / sai khuôn → 0, dòng đó không vào cột tháng nào
     return 0
 
 
@@ -43,8 +37,8 @@ def _get_year_from_date(date_str: str) -> int:
         parts = str(date_str).strip().split('/')
         if len(parts) >= 3:
             return int(parts[2][:4])
-    except Exception:
-        pass
+    except (ValueError, TypeError):
+        pass        # như trên
     return 0
 
 
@@ -464,7 +458,6 @@ def _replace_date_runs(para, month: int, year: int):
 
 
 def _set_row_cells(row, values):
-    import copy as _copy
     seen = set()
     vi = 0
     for cell in row.cells:

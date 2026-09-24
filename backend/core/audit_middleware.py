@@ -52,27 +52,55 @@ _SKIP_PREFIXES = (
     # lưu tiến độ và bỏ bài dở: đều là thao tác của một người trên bài của
     # chính họ, không ai cần tra soát.
     "/api/quiz",
+    # Khảo sát — lý do KHÁC hẳn các dòng trên: middleware này ghi cả BODY của
+    # request, mà body của POST /{id}/responses chính là câu trả lời. Khảo sát
+    # ẩn danh sẽ có nguyên nội dung + actor_id nằm trong audit_logs, ai xem được
+    # Nhật ký hệ thống là đọc được ai viết gì. Mọi thao tác ghi của khảo sát đã
+    # tự `write_audit` ngữ nghĩa (không kèm nội dung) trong backend/api/surveys.py.
+    "/api/surveys",
 )
 
 _ID_RE = re.compile(r"/\d+")
 
-# Đường dẫn ĐƠN LẺ đã tự ghi write_audit ngữ nghĩa nhưng nằm trong nhánh không
-# được bỏ qua. Bỏ cả prefix "/api/leaves" thì mất nhật ký của toàn bộ nghỉ phép,
-# nên chặn đúng một đường. So khớp trên path đã chuẩn hoá số → /{id}.
+# Đường dẫn ĐƠN LẺ bỏ qua. Bỏ cả prefix "/api/leaves" thì mất nhật ký của toàn
+# bộ nghỉ phép, nên chặn từng đường. So khớp trên path đã chuẩn hoá số → /{id}.
+#
+# Chặn theo danh sách đen, không lọc theo danh sách trắng "chỉ ghi thao tác":
+# endpoint mới quên khai thì thừa một dòng nhật ký, còn quên khai vào danh sách
+# trắng thì mất vết một thao tác thật mà không ai hay.
 _SKIP_EXACT = {
+    # Đã tự ghi write_audit ngữ nghĩa
     ("PATCH", "/api/leaves/quotas/staff/{id}/join-date"),
+
+    # ── POST nhưng KHÔNG phải thao tác nghiệp vụ (người dùng yêu cầu 14/09/2026) ──
+    # Chỉ đọc / dọn đường, không ghi dữ liệu nghiệp vụ nào (riêng `ack` ghi cờ
+    # "đã đọc thông báo" của chính người bấm — không phải hồ sơ). Ghi lại thì mở màn
+    # hình hay chọn file cũng thành một dòng "Thực hiện …" (đo trên máy thật:
+    # 310 dòng /api/ach/validate so với 23 lượt chạy ACH).
+    ("POST", "/api/leaves/preview/warmup"),          # tự gọi lúc MỞ màn Nghỉ phép
+    ("POST", "/api/leaves/carryover-notice/ack"),    # bấm "Đã hiểu" ở popup thông báo
+    ("POST", "/api/leaves/preview"),                 # xem trước đơn chưa gửi
+    ("POST", "/api/leaves/quotas/{id}/import/preview"),  # xem trước file hạn mức; apply vẫn ghi
+    ("POST", "/api/ach/validate"),                   # dò tên file mỗi lần chọn/bỏ file
+    ("POST", "/api/doi_chieu_song_phuong_kenh_core/check_readiness"),
+    ("POST", "/api/doi_chieu_song_phuong_kenh_core_di/check_readiness"),
 }
+
+
+def bo_qua(method: str, path: str) -> bool:
+    """True nếu request này không để lại dòng nhật ký nào."""
+    return (
+        method not in _MUTATING
+        or any(path.startswith(p) for p in _SKIP_PREFIXES)
+        or (method, _ID_RE.sub("/{id}", path)) in _SKIP_EXACT
+    )
 
 
 class AuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         method = request.method
         path = request.url.path
-        bo_qua = (
-            method not in _MUTATING
-            or any(path.startswith(p) for p in _SKIP_PREFIXES)
-            or (method, _ID_RE.sub("/{id}", path)) in _SKIP_EXACT
-        )
+        khong_ghi = bo_qua(method, path)
 
         # Body phải đọc TRƯỚC call_next: sau đó route đã hút hết luồng, đọc lại
         # là chờ vô hạn. Starlette bọc request bằng _CachedRequest nên gọi
@@ -80,7 +108,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         # dưới. Vẫn phải nuốt lỗi: client ngắt giữa chừng thì `body()` ném
         # ClientDisconnect, mà nhật ký không được phép làm hỏng request.
         body = None
-        if not bo_qua and audit_body.nen_doc_body(request.headers):
+        if not khong_ghi and audit_body.nen_doc_body(request.headers):
             try:
                 body = await request.body()
             except Exception:
@@ -88,7 +116,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        if bo_qua:
+        if khong_ghi:
             return response
         # 404/405 = không khớp route → không có thao tác thực sự, khỏi ghi
         if response.status_code in (404, 405):
