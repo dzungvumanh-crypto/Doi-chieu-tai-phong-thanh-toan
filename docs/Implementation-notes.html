@@ -53,6 +53,67 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-24</p>
 
+  <!-- HN7 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN7</span>
+      <span class="card-title">Bìa tập chứng từ (<code>cover-all</code>) chậm 2,7–3,5 s — nhớ phần chuẩn bị mẫu docxtpl, khoá nút tải</span>
+      <span class="badge badge-done">Xong — máy dev 2,0 s → 0,8 s (31 tập)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Log 24/09/2026: 3 dòng <code>slow.request</code> cho <code>GET /api/bundles/groups/39/cover-all</code>, lúc không có đối chiếu nào.
+        Mọi chỉ số tải đều thấp (luồng 0/40, CSDL 0–1/48, việc nặng 0–1/4) — không phải hệ thống nghẽn mà chính việc dựng
+        file chậm. <code>trễ tổng</code> 288–384 ms là luồng dựng bìa giành GIL với event loop, đúng kiểu card 144 nhưng nhỏ.</p>
+
+      <table>
+        <tr><th>Bước (lặp cho MỖI tập)</th><th>31 tập, trước</th><th>Sau</th></tr>
+        <tr><td>Regex làm sạch XML mẫu (<code>patch_xml</code>)</td><td>620 ms</td><td>1 lần, nhớ theo chuỗi</td></tr>
+        <tr><td>Dịch XML thành mẫu Jinja (<code>from_string</code>, 7 phần/tập)</td><td>580 ms</td><td>1 lần/phần, nhớ theo chuỗi</td></tr>
+        <tr><td><code>tpl.save()</code> ra zip rồi <code>Document()</code> đọc lại</td><td>~650 ms</td><td>Bỏ — dùng thẳng <code>tpl.docx</code></td></tr>
+        <tr><td>Mở file mẫu (<code>init_docx</code>)</td><td>520 ms</td><td>Giữ nguyên (dưới)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Nhớ qua điểm móc công khai, không viết lại luồng render của docxtpl</div>
+      <p>Có thể nhanh hơn nữa nếu tự dựng XML thân rồi bỏ docxtpl — nhưng phải chép lại <code>fix_tables</code>,
+        <code>resolve_listing</code>, <code>fix_docpr_ids</code> và gãy khi nâng thư viện. Thay vào đó chỉ dùng hai chỗ docxtpl mở sẵn:
+        tham số <code>jinja_env</code> (môi trường tự nhớ <code>from_string</code>) và lớp con ghi đè <code>patch_xml</code> (hàm thuần,
+        không đọc <code>self</code> — đã soát mã 0.16.8). Khoá nhớ là chính chuỗi XML của mẫu: sửa file <code>bia_mau_goc.docx</code>
+        thì chuỗi đổi, tự dịch lại, không cần khởi động lại. Kiểm bằng cách so từng phần zip với bản cũ: <code>document.xml</code>
+        giống từng byte; chỉ <code>core.xml</code> khác cách viết thẻ rỗng (<code>&lt;dc:title/&gt;</code> ↔ <code>&lt;dc:title&gt;&lt;/dc:title&gt;</code>).</p>
+      <p>Bỏ <code>save()</code> an toàn vì <code>DocxTemplate.save()</code> khi không có ảnh/file nhúng cần thay chỉ gọi <code>docx.save()</code>.
+        Thêm ảnh vào mẫu bìa (<code>replace_pic</code>, <code>InlineImage</code>) thì phải xét lại chỗ này.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Thêm <code>cover-all</code> / <code>cover-bulk</code> vào nhóm việc dựng file của <code>slow_request</code></div>
+      <p>Không dùng từ "cover" trần (phản biện chỉ ra): nó khớp cả bìa lẻ <code>/{id}/cover</code> (~0,1 s) và
+        <code>archive-cover-*</code> — nâng chúng lên 8 s là mất cảnh báo đúng lúc chúng hỏng.</p>
+      <p>Sau khi tăng tốc, nhóm 31 tập ước ~1,4 s trên máy chủ (tỉ lệ máy chủ/dev đo được 3,4/2,0) — sát ngưỡng 1,5 s; nhóm lớn hơn
+        và <code>cover-bulk</code> (cả phòng) vẫn sẽ vượt. Đây là dựng file Word, cùng loại với <code>export</code>/<code>download</code>
+        vốn đã có ngưỡng 8 s. Ngưỡng 8 s vẫn bắt được ca hỏng thật.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Bật autoescape — sửa lỗi cắt chữ có sẵn</div>
+      <p>Trước đây render với autoescape tắt: tên có <code>&amp;</code> / <code>&lt;</code> làm XML hỏng, <code>fix_tables</code> đọc bằng
+        <code>recover=True</code> nên lặng lẽ cắt chữ (thử: <code>"Nguyễn Văn &lt;&amp;&gt;"</code> in ra <code>"Nguyễn Văn &gt;"</code>). CSDL dev có
+        phòng <b>"Phòng KSNB&amp;HTVH"</b> — không phải phòng nguồn nên chưa có tập nào dính. Mọi giá trị ngữ cảnh là chuỗi thường,
+        không có RichText/Listing, nên bật autoescape không đổi gì với tên bình thường (đã so: chỉ tên có ký tự đặc biệt khác đi).</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Khoá nút "Tải xuống" khi đang dựng</div>
+      <p>Log có hai lượt chồng nhau cách 2 s (<code>đang xử lý 2</code>): thông báo "Đang tải bìa..." chỉ hiện <i>sau</i> khi tải xong,
+        suốt mấy giây chờ không có dấu hiệu gì nên người dùng bấm lại. Nay nút hiện vòng xoay (<code>props("loading")</code> — Quasar bỏ
+        qua lượt bấm khi đang loading), theo mẫu có sẵn ở <code>reports.py</code>.</p>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm</span></div>
+      <ul>
+        <li><b>Phiếu nghỉ phép cùng lỗi autoescape</b>: <code>leaves.py</code> (~dòng 2714) gọi <code>tpl.render(ctx)</code> không autoescape,
+          mà "lý do nghỉ" do người dùng tự gõ — "khám bệnh &amp; ..." sẽ bị cắt trên đơn in. Chưa sửa vì đổi đầu ra của đơn đang có
+          chữ ký/cache PDF theo nội dung (<code>leave_pdf.py</code>), cần rà riêng.</li>
+        <li>Mở file mẫu 31 lần (520 ms) và đọc chữ từng ô để căn giữa (240 ms) còn lại. Mở một lần rồi nhân bản <code>Document</code>
+          không có đường công khai trong python-docx — không đáng đánh đổi độ phức tạp.</li>
+        <li>Bìa lẻ <code>/{id}/cover</code> là <code>def</code> không qua <code>run_heavy</code> — 1 tập ~40 ms, không đáng.</li>
+      </ul>
+    </div>
+  </div>
+
   <!-- NK4 -->
   <div class="card">
     <div class="card-header">

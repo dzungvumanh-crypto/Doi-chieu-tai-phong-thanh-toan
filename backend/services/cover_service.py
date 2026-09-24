@@ -8,10 +8,12 @@ Placeholders: dept_name, date_text, tap_so, total_sheets, custodian,
 import io
 import os
 import copy
+from functools import lru_cache
 from typing import List
 from datetime import date
 
 from docxtpl import DocxTemplate
+from jinja2 import Environment
 from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -78,13 +80,44 @@ def _build_context(department_name: str, bundle: BundleResult) -> dict:
     return ctx
 
 
+# ── Nhớ phần chuẩn bị mẫu — giống hệt nhau cho mọi tập ──
+# Mỗi tập, docxtpl làm lại: regex làm sạch XML (~20 ms) + dịch XML thành mẫu Jinja
+# (~19 ms), rồi bản cũ còn lưu ra zip và mở lại (~20 ms). Nhóm 31 tập mất 3,4 s trên
+# máy chủ (log slow.request 24/09/2026). Đầu vào hai bước đầu là chính file mẫu, nên
+# nhớ theo chuỗi — sửa file mẫu thì chuỗi đổi, tự dịch lại.
+@lru_cache(maxsize=8)
+def _patch_nho(src_xml: str) -> str:
+    return DocxTemplate.patch_xml(None, src_xml)   # hàm thuần, không đọc self
+
+
+class _MauNho(DocxTemplate):
+    def patch_xml(self, src_xml):
+        return _patch_nho(src_xml)
+
+
+class _EnvNho(Environment):
+    # Template của Jinja render được song song từ nhiều luồng; lru_cache cũng an toàn luồng
+    @lru_cache(maxsize=32)
+    def _dich(self, source: str):
+        return super().from_string(source)
+
+    def from_string(self, source, globals=None, template_class=None):
+        if globals is None and template_class is None:
+            return self._dich(source)
+        return super().from_string(source, globals, template_class)
+
+
+# autoescape BẬT: tắt thì "&" / "<" trong tên (vd phòng "KSNB&HTVH") làm hỏng XML, bộ đọc
+# chế độ recover của docxtpl lặng lẽ cắt mất chữ — bìa in thiếu tên, không lỗi nào
+_ENV = _EnvNho(autoescape=True)
+
+
 def _render_to_doc(ctx: dict) -> Document:
-    tpl = DocxTemplate(TEMPLATE_PATH)
-    tpl.render(ctx)
-    buf = io.BytesIO()
-    tpl.save(buf)
-    buf.seek(0)
-    doc = Document(buf)
+    tpl = _MauNho(TEMPLATE_PATH)
+    tpl.render(ctx, jinja_env=_ENV)
+    # Không có ảnh/file nhúng cần thay thì save() của docxtpl chỉ là docx.save() —
+    # lấy thẳng Document đã render, khỏi nén zip rồi giải nén lại
+    doc = tpl.docx
     # Center-align count cells (cells that contain only digits) in data rows
     if doc.tables:
         from docx.enum.text import WD_ALIGN_PARAGRAPH
