@@ -1,6 +1,7 @@
 """API endpoints cho tính năng Chấm đối chiếu ACH."""
 
-import asyncio
+import shutil
+import uuid
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -8,6 +9,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core import phien_doi_chieu
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.core.uploads import (
     MAX_REQUEST_BYTES,
@@ -366,36 +368,53 @@ async def phub_gop_endpoint(
     người dùng biết và chấp nhận — KHÔNG tự ý bọc `gianh_cho('ach')` vào đây
     khi review/sửa sau này, xem `docs/Implementation-notes.html` (card "ACH —
     Luồng C") + `pipeline/PLAN.md` mục 4 (C-K) trước khi định đổi.
+
+    Sửa theo review Khánh (PR #136, 24/09/2026): phần NẶNG (đọc file, gộp,
+    xuất Excel) trước đây chạy qua `asyncio.to_thread()` — bể luồng RIÊNG,
+    NGOÀI mọi giới hạn RAM/số lượt của hệ thống (`MAX_HEAVY_TASKS`, trần RAM
+    cứng Job Object). Nay ghi từng file tải lên ra một thư mục tạm dưới
+    `TEMP_DIR` (KHÔNG giữ trong RAM), rồi giao cho `ach_service.gop_phub()`
+    qua `await run_heavy(...)` — bên trong đó gọi tiếp
+    `chay_tach(phub_gop.gop_phub_tu_file, ...)` (tiến trình riêng, cùng khuôn
+    `backend/services/swift_recon/tach.py`). Việc này TỰ ĐỘNG được bảo vệ bởi
+    trần RAM cứng của Job Object dù KHÔNG chiếm khoá `gianh_cho('ach')` — xem
+    `docs/Implementation-notes.html` card 162. Thư mục tạm đầu vào bị xoá
+    NGAY sau khi xử lý xong (thành công hay lỗi), đúng nguyên tắc "không lưu
+    gì trên server ngoài đúng kết quả cuối".
     """
     if not files:
         raise HTTPException(400, 'Cần upload ít nhất 1 file.')
 
-    noi_dung: list[tuple[str, bytes]] = []
-    tong = 0
-    da_dung: set[str] = set()
-    for f in files:
-        ten = safe_filename(f.filename, f'file_{len(noi_dung)}.dat')
-        if ten in da_dung:
-            raise HTTPException(
-                400,
-                f"Có hai file cùng tên '{ten}' trong một lượt gộp — đổi tên hoặc bỏ bớt rồi thử lại.",
-            )
-        da_dung.add(ten)
-        try:
-            data = await read_limited(f, max_bytes=_MAX_UPLOAD - tong, ten=f"File '{ten}'")
-        except HTTPException as e:
-            if e.status_code != 413:
-                raise
-            raise HTTPException(
-                413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
-        tong += len(data)
-        noi_dung.append((ten, data))
-
+    tmp_dir = ach_service.TEMP_DIR / f'phubgop_in_{uuid.uuid4().hex[:12]}'
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     try:
-        ket_qua = await asyncio.to_thread(ach_service.gop_phub, noi_dung)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return ket_qua
+        duong_dan: list[tuple[str, str]] = []
+        tong = 0
+        da_dung: set[str] = set()
+        for f in files:
+            ten = safe_filename(f.filename, f'file_{len(duong_dan)}.dat')
+            if ten in da_dung:
+                raise HTTPException(
+                    400,
+                    f"Có hai file cùng tên '{ten}' trong một lượt gộp — đổi tên hoặc bỏ bớt rồi thử lại.",
+                )
+            da_dung.add(ten)
+            path = tmp_dir / ten
+            try:
+                tong += await save_upload_to(f, path, _MAX_UPLOAD - tong)
+            except HTTPException as e:
+                if e.status_code != 413:
+                    raise
+                raise HTTPException(
+                    413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
+            duong_dan.append((ten, str(path)))
+
+        try:
+            return await run_heavy(ach_service.gop_phub, duong_dan)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @router.get('/phub-gop/{ma}/tai')

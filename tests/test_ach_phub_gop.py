@@ -245,10 +245,25 @@ class TestPhanLoaiFileGop:
 
 # ── ach_service.gop_phub() — Luồng C (bản-3), nối C-a + phub_gop + xuất Excel ─
 
+def _ghi_ra_dia(tmp_path, ten_thu_muc: str, danh_sach: list[tuple[str, bytes]]) -> list[tuple[str, str]]:
+    """Ghi từng (tên, bytes) ra `tmp_path/ten_thu_muc/tên`, trả về [(tên, đường_dẫn)] —
+    mô phỏng đúng việc lớp API (`backend/api/ach.py::phub_gop_endpoint`) làm TRƯỚC khi
+    gọi `ach_service.gop_phub()` (PR #136: chữ ký đổi từ nhận bytes sang nhận đường
+    dẫn trên đĩa, tránh pickle nguyên khối dữ liệu qua tiến trình con)."""
+    thu_muc = tmp_path / ten_thu_muc
+    thu_muc.mkdir()
+    duong_dan = []
+    for ten, noi_dung in danh_sach:
+        path = thu_muc / ten
+        path.write_bytes(noi_dung)
+        duong_dan.append((ten, str(path)))
+    return duong_dan
+
+
 class TestAchServiceGopPhub:
     def test_gop_2_ngay_gia_lap_ghi_ra_temp_dir(self, tmp_path, monkeypatch):
         monkeypatch.setattr(ach_service, 'TEMP_DIR', tmp_path)
-        danh_sach = [
+        danh_sach = _ghi_ra_dia(tmp_path, 'in', [
             ('pHub.xlsx', _phub_xlsx_bytes([
                 {'chi_nhanh': '1400', 'so_thanh_cong': 'MSG_A', 'trace2': '111',
                  'so_tien': '500', 'ngay_gui': '15/09/2026 10:00:00'},
@@ -264,7 +279,7 @@ class TestAchServiceGopPhub:
                 {'CHI_NHANH': '1400', 'TRACE': '222', 'SE_TRACE': '', 'SO_TIEN': '600',
                  'NGAY_DOI_CHIEU': '20260916'},
             ])),
-        ]
+        ])
         ket_qua = ach_service.gop_phub(danh_sach)
 
         assert ket_qua['tong_ket'] == {
@@ -280,14 +295,14 @@ class TestAchServiceGopPhub:
         """Không còn ngày nào xác định được → ValueError rõ ràng, KHÔNG để
         xuat_excel_phub_gop() crash IndexError vì ngay_list rỗng."""
         monkeypatch.setattr(ach_service, 'TEMP_DIR', tmp_path)
-        danh_sach = [
+        danh_sach = _ghi_ra_dia(tmp_path, 'in', [
             ('pHub.xlsx', _phub_xlsx_bytes([{'chi_nhanh': '1400', 'so_thanh_cong': 'A',
                                             'trace2': '1', 'so_tien': '1',
                                             'ngay_gui': '15/09/2026 10:00:00'}])),
             ('TIMEOUT_CU.csv', _timeout_csv_bytes(
                 [{'CHI_NHANH': '1400', 'TRACE': '1', 'SE_TRACE': '', 'SO_TIEN': '1'}],
                 voi_cot_ngay=False)),
-        ]
+        ])
         with pytest.raises(ValueError, match='Không xác định được ngày nào'):
             ach_service.gop_phub(danh_sach)
 

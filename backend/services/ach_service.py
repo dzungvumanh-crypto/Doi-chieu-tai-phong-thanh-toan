@@ -495,51 +495,46 @@ dang_ky_nguon('ach', 'Đối chiếu ACH', job_dang_chay)
 # chốt, KHÔNG chiếm khoá `gianh_cho('ach')`, xem docstring endpoint ở
 # backend/api/ach.py + docs/Implementation-notes.html card 147).
 
-def gop_phub(files: list[tuple[str, bytes]]) -> dict:
-    """Gộp N file TIMEOUT + N file GW-cho-pHub + 1 file pHub (đã đọc sẵn vào
-    RAM ở lớp API — không ghi input xuống đĩa, đúng nguyên tắc "không lưu gì
-    trên server" của bản-3). Ghi DUY NHẤT file kết quả ra
-    `TEMP_DIR/phubgop_<mã>/` (tái dùng `TEMP_DIR`, KHÔNG tạo thư mục mới nào
-    khác dưới `data/`) — thư mục này không nằm trong `_jobs` nên tự rơi vào
-    nhánh "thư mục mồ côi" của `_cleanup_old_jobs()`, dọn 23h như mọi output
-    ACH khác (C-R đã chốt, không cần hạn riêng).
+def gop_phub(duong_dan: list[tuple[str, str]]) -> dict:
+    """Lớp NHẸ (chạy trong `run_heavy()` — threadpool, KHÔNG tiến trình
+    riêng): dọn kho mồ côi cũ, sinh mã + tạo thư mục output — rồi giao phần
+    NẶNG (đọc N file GW-cho-pHub/Timeout đã ghi ra đĩa + gộp + xuất Excel)
+    cho `phub_gop.gop_phub_tu_file()` chạy ở TIẾN TRÌNH RIÊNG qua
+    `chay_tach()`. Đổi cách chạy theo review Khánh (PR #136) — trước đây gọi
+    thẳng qua `asyncio.to_thread()` (bể luồng riêng, NGOÀI mọi giới hạn RAM/
+    số lượt của hệ thống); nay tự động vào trần RAM cứng Job Object của
+    `chay_tach()` dù C-K vẫn giữ nguyên: KHÔNG chiếm khoá `gianh_cho('ach')`
+    (xem docs/Implementation-notes.html card 162).
+
+    `duong_dan` là `[(tên_hiển_thị, đường_dẫn_trên_đĩa)]` do lớp API ghi sẵn
+    ra một thư mục tạm dưới `TEMP_DIR` (KHÔNG truyền bytes qua ranh giới tiến
+    trình — mẫu SWIFT recon, `backend/services/swift_recon/tach.py`). Ghi
+    DUY NHẤT file kết quả ra `TEMP_DIR/phubgop_<mã>/` (tái dùng `TEMP_DIR`,
+    KHÔNG tạo thư mục mới nào khác dưới `data/`) — thư mục này không nằm
+    trong `_jobs` nên tự rơi vào nhánh "thư mục mồ côi" của
+    `_cleanup_old_jobs()`, dọn 23h như mọi output ACH khác (C-R đã chốt,
+    không cần hạn riêng).
 
     Trả `{'ma', 'tong_ket', 'canh_bao', 'ten_file'}`. Raise `ValueError` khi
     input không hợp lệ (0/≥2 file pHub, file lạ, không xác định được ngày nào
-    để gộp) — lớp API map sang 400."""
+    để gộp) — lớp API map sang 400.
+
+    CHỈ tính toán đường dẫn `out_dir`, KHÔNG tạo thư mục ở đây: bản cũ (trước
+    PR #136) chỉ `mkdir()` ngay trước lúc ghi file kết quả, sau khi mọi bước
+    parse/validate đã qua — tạo thư mục sớm hơn (trước khi biết input có hợp
+    lệ hay không) để lại thư mục output RỖNG mồ côi mỗi lần người dùng gộp
+    thất bại (400). `phub_gop.gop_phub_tu_file()` tự `mkdir()` đúng lúc nó
+    cần, bên trong tiến trình con."""
     _cleanup_old_jobs()   # dọn kết quả gộp cũ (mồ côi) trước khi ghi thêm
-
-    df_phub, df_gw, df_timeout, canh_bao = phub_gop.phan_loai_file_gop(files)
-
-    # ngay_list — QUYẾT ĐỊNH TỰ CHỌN (PLAN.md không nêu, C-a chỉ trả 4 giá trị,
-    # không có ngay_list): suy ra từ NGAY_TIMEOUT thực tế có trong df_timeout
-    # (sau khi đã loại các file thiếu cột NGAY_DOI_CHIEU). Hạn chế đã biết: nếu
-    # TOÀN BỘ file Timeout của lượt gộp đều có 0 dòng (R6 — mọi giao dịch trong
-    # ngày đã khớp GW, không gì rơi vào Timeout) VÀ đó là ngày DUY NHẤT trong
-    # lượt, ngay_list sẽ rỗng vì không còn cách nào khác lấy được ngày từ nội
-    # dung file (C-N cấm đọc tên file/gõ tay) — raise lỗi rõ ràng thay vì để
-    # `xuat_excel_phub_gop()` crash IndexError khi ngay_sorted[0]. Xem
-    # pipeline/CODE_REPORT.md phần Luồng C để biết lý do đầy đủ.
-    ngay_list = sorted({n for n in df_timeout['NGAY_TIMEOUT'] if n}) if len(df_timeout) else []
-    if not ngay_list:
-        raise ValueError(
-            'Không xác định được ngày nào từ các file TIMEOUT đã nạp (thiếu cột NGAY_DOI_CHIEU '
-            'hoặc không có dòng dữ liệu nào) — không có gì để gộp.'
-        )
-
-    df_ketqua, thong_ke = phub_gop.gop_phub(df_phub, df_gw, df_timeout, ngay_list)
 
     ma = 'phubgop_' + uuid.uuid4().hex[:12]
     out_dir = TEMP_DIR / ma
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = phub_gop.xuat_excel_phub_gop(str(out_dir), ngay_list, df_ketqua, canh_bao)
 
-    return {
-        'ma':       ma,
-        'tong_ket': thong_ke,
-        'canh_bao': canh_bao,
-        'ten_file': os.path.basename(out_path),
-    }
+    ket_qua = chay_tach(
+        phub_gop.gop_phub_tu_file, ten='Gộp pHub',
+        duong_dan=duong_dan, output_dir=str(out_dir),
+    )
+    return {'ma': ma, **ket_qua}
 
 
 def tai_ket_qua_gop(ma: str, filename: str) -> Path | None:

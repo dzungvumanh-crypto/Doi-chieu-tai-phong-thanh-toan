@@ -20802,6 +20802,25 @@ This may happen if you try to create UI from a background task.</pre>
         trước, không tự quyết. Xem <code>pipeline/PLAN.md</code> mục 4 (mã quyết định <b>C-K</b>) +
         docstring của <code>phub_gop_endpoint()</code> trong <code>backend/api/ach.py</code>.</p></div>
 
+      <div class="label"><span class="pill pill-green">Bổ sung 24/09/2026 (PR #136, review Khánh)</span>
+        Sau khi chuyển phần nặng qua <code>chay_tach()</code>, rủi ro C-K đã GIẢM một phần — không cần
+        sửa lại quyết định</div>
+      <p>Phần nặng của lượt Gộp (đọc file, đối chiếu, xuất Excel) giờ chạy ở TIẾN TRÌNH RIÊNG qua
+        <code>chay_tach(phub_gop.gop_phub_tu_file, ...)</code> thay vì <code>asyncio.to_thread()</code>
+        (bể luồng riêng, ngoài mọi giới hạn của hệ thống). Vì vậy, dù endpoint này VẪN KHÔNG chiếm khoá
+        <code>gianh_cho('ach')</code> (C-K không đổi), nó TỰ ĐỘNG được bảo vệ bởi trần RAM CỨNG của
+        Windows Job Object (lớp 2, <code>_TRAN_RAM_MAC_DINH_GB</code> —
+        <code>backend/core/tien_trinh_doi_chieu.py</code>) mà mọi tiến trình chạy qua
+        <code>chay_tach()</code> đều tự động vào: tiến trình con của lượt Gộp ăn quá phần RAM còn lại
+        trong trần chung thì CHỈ nó chết (MemoryError), backend và các lượt chạy khác không bị kéo theo
+        — khác hẳn tình huống 26/08/2026 (2 luồng cùng tiến trình web, một luồng hết RAM là kéo sập cả
+        backend). Không khai thêm mức RAM ước tính riêng cho lượt Gộp vào <code>NGAN_SACH_RAM_GB</code>
+        (lớp 1, ngân sách MỀM ở <code>phien_doi_chieu.py</code>): lớp đó chỉ có tác dụng nếu có một nơi
+        THẬT SỰ gọi <code>gianh_cho_ram()</code> để kiểm trước khi chạy — lượt Gộp không tạo job trong
+        <code>_jobs</code> (cố ý, theo thiết kế bản-3), không có "đang chạy hay không" để đăng ký qua
+        <code>dang_ky_nguon()</code>, nên khai thêm một dòng cấu hình ở đó sẽ là cấu hình CHẾT, không ai
+        đọc tới — dễ gây hiểu lầm "đã có bảo vệ" hơn là không khai gì cả.</p>
+
       <div class="label"><span class="pill pill-blue">Vì sao chấp nhận được</span> Dữ liệu Luồng C nhỏ hơn hẳn 1 lượt chạy ACH chính</div>
       <p>Input của 1 lượt Gộp là vài file CSV tóm tắt theo ngày (TIMEOUT_KHONG_KENH/GW_CHO_PHUB) + 1 file
         pHub — nhỏ hơn nhiều so với bộ MIS_DI/MIS_DEN .zip vài trăm MB của 1 lượt chạy ACH chính. Rủi ro
@@ -20810,15 +20829,26 @@ This may happen if you try to create UI from a background task.</pre>
         ro bằng không.</p>
 
       <div class="label"><span class="pill pill-blue">"Không lưu gì trên server"</span> — chỉ áp cho INPUT, không áp cho OUTPUT</div>
-      <p>File người dùng tải lên (TIMEOUT/GW/pHub) đọc thẳng vào RAM (<code>phan_loai_file_gop()</code>),
-        KHÔNG ghi xuống đĩa — khác hẳn <code>/start</code> (ghi từng khối thẳng ra
-        <code>input_dir</code>). Chỉ đúng 1 file kết quả (<code>GOP_PHUBLOI_&lt;ngày đầu&gt;_&lt;ngày
+      <p><b>Đổi cách ghi input 24/09/2026 (PR #136):</b> trước đây file người dùng tải lên đọc thẳng vào
+        RAM (<code>phan_loai_file_gop()</code> nhận list bytes), không ghi xuống đĩa. Nay lớp API
+        (<code>phub_gop_endpoint()</code>) ghi từng file ra một thư mục tạm riêng dưới
+        <code>TEMP_DIR/phubgop_in_&lt;mã&gt;/</code> TRƯỚC khi gọi <code>chay_tach()</code> — bắt buộc vì
+        tiến trình con không nhận được bytes qua tham số hàm một cách rẻ (phải pickle nguyên khối dữ
+        liệu vài trăm MB qua ranh giới tiến trình), chỉ nhận đường dẫn (mẫu SWIFT recon,
+        <code>backend/services/swift_recon/tach.py::_tep_tam()</code>). Thư mục tạm ĐẦU VÀO này bị xoá
+        NGAY trong khối <code>finally</code> của endpoint — thành công hay lỗi đều dọn — nên nguyên tắc
+        "không lưu gì trên server" của bản-3 KHÔNG đổi ý nghĩa, chỉ đổi CÁCH (đĩa tạm trong lúc xử lý
+        thay vì RAM trong lúc xử lý), vẫn không có gì tồn tại quá thời gian 1 request.</p>
+      <p>Chỉ đúng 1 file kết quả (<code>GOP_PHUBLOI_&lt;ngày đầu&gt;_&lt;ngày
         cuối&gt;.xlsx</code>, kèm CSV nếu vượt <code>CSV_THRESHOLD</code>) được ghi ra
         <code>data/temp_ach/phubgop_&lt;mã&gt;/</code> — tái dùng đúng <code>TEMP_DIR</code> đã có, không
         tạo thư mục mới nào khác dưới <code>data/</code> (đúng ràng buộc ổ đĩa đã làm hỏng bản-2 pHub,
         xem card 161). Thư mục này KHÔNG nằm trong <code>_jobs</code> (không phải 1 job ACH thật) nên tự
         rơi vào nhánh "thư mục mồ côi" sẵn có của <code>_cleanup_old_jobs()</code> — dọn 23h theo đúng
-        lịch chung, không cần cơ chế hạn riêng (C-R).</p>
+        lịch chung, không cần cơ chế hạn riêng (C-R). Thư mục output CHỈ được tạo (<code>mkdir</code>)
+        SAU khi mọi bước parse/validate đã qua trong <code>gop_phub_tu_file()</code> — tạo sớm hơn để
+        lại thư mục rỗng mồ côi mỗi lần người dùng gộp thất bại (400), đã tự phát hiện + sửa qua test
+        <code>test_gop_loi_van_don_sach_thu_muc_tam</code>.</p>
 
       <div class="label"><span class="pill pill-green">C-N — cột ngày <code>NGAY_DOI_CHIEU</code>, KHÔNG đọc tên file</span></div>
       <p>Lớp phân loại (<code>phan_loai_file_gop()</code>) nhận diện loại file THEO NỘI DUNG (pHub: dòng

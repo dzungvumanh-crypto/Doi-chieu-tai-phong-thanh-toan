@@ -26,7 +26,10 @@ from .so_tien import doc_so_tien
 
 _CAM = '#FFA500'   # đồng bộ màu tab với Mục 3 cũ (pipeline.py)
 
-__all__ = ['doc_phub', 'gop_phub', 'xuat_excel_phub_gop', 'phan_loai_file_gop']
+__all__ = [
+    'doc_phub', 'gop_phub', 'xuat_excel_phub_gop', 'phan_loai_file_gop',
+    'gop_phub_tu_file',
+]
 
 # ─── Luồng C (bản-3, 23.09.2026) — phân loại N file người dùng nạp trong CÙNG ──
 # 1 lượt gộp, theo NỘI DUNG chứ không theo tên file (feedback_nhan_dien_file_
@@ -322,3 +325,55 @@ def xuat_excel_phub_gop(output_dir: str, ngay_list: list[str], df_ketqua: pd.Dat
     workbook.close()
     _log(f'[DONE] File pHub gộp: {output_path}')
     return output_path
+
+
+# ── Điểm vào của chay_tach() — phần NẶNG chạy ở TIẾN TRÌNH RIÊNG ─────────────
+# (review Khánh, PR #136 — trước đây `ach_service.gop_phub()` chạy thẳng qua
+# `asyncio.to_thread()`, ngoài mọi giới hạn RAM/số lượt của hệ thống. Đồng bộ
+# khuôn với `backend/services/swift_recon/tach.py` — xem docs/DESIGN.md.)
+
+def gop_phub_tu_file(duong_dan: list[tuple[str, str]], output_dir: str,
+                     log_callback=None, cancel_event=None) -> dict:
+    """Chạy trong TIẾN TRÌNH CON qua `chay_tach()`
+    (`backend/api/ach.py::phub_gop_endpoint`) — hàm cấp module, KHÔNG đụng
+    `_jobs`/bất kỳ biến toàn cục nào của `ach_service.py` (mọi thay đổi vào
+    global trong tiến trình con chỉ là bản sao riêng, không về được cha).
+
+    `duong_dan` là `[(tên_hiển_thị, đường_dẫn_trên_đĩa)]` — lớp API đã ghi
+    từng file tải lên ra đĩa TRƯỚC khi gọi hàm này, tránh phải pickle nguyên
+    khối dữ liệu vài trăm MB qua ranh giới tiến trình (đọc file lại TỪ ĐĨA ở
+    đây, bên trong con, không tốn chi phí serialize). `output_dir` đã được
+    lớp gọi tạo sẵn.
+
+    `cancel_event` không được kiểm — lượt Gộp chỉ vài file CSV tóm tắt + 1
+    file pHub (nhỏ hơn hẳn 1 lượt chạy ACH chính), không có bước nào đủ dài
+    để cần huỷ giữa chừng; vẫn phải NHẬN tham số này để khớp hợp đồng
+    `chay_tach()` (docs/DESIGN.md).
+
+    Trả `{'tong_ket', 'canh_bao', 'ten_file'}` — pickle được để mang ngược về
+    tiến trình cha. Raise `ValueError` khi input không hợp lệ (0/≥2 file
+    pHub, file lạ, không xác định được ngày nào để gộp) — lớp API map sang
+    400, giống hệt hành vi trước khi đổi cách chạy."""
+    danh_sach = [(ten, open(dp, 'rb').read()) for ten, dp in duong_dan]
+    df_phub, df_gw, df_timeout, canh_bao = phan_loai_file_gop(danh_sach)
+
+    # ngay_list — xem giải thích đầy đủ ở docstring cũ của
+    # ach_service.gop_phub() (pipeline/CODE_REPORT.md phần Luồng C): suy ra từ
+    # NGAY_TIMEOUT thực tế có trong df_timeout, raise rõ ràng khi rỗng thay vì
+    # để xuat_excel_phub_gop() crash IndexError.
+    ngay_list = sorted({n for n in df_timeout['NGAY_TIMEOUT'] if n}) if len(df_timeout) else []
+    if not ngay_list:
+        raise ValueError(
+            'Không xác định được ngày nào từ các file TIMEOUT đã nạp (thiếu cột NGAY_DOI_CHIEU '
+            'hoặc không có dòng dữ liệu nào) — không có gì để gộp.'
+        )
+
+    df_ketqua, thong_ke = gop_phub(df_phub, df_gw, df_timeout, ngay_list, log_callback=log_callback)
+
+    # Chỉ tạo output_dir ở ĐÂY — sau khi mọi bước parse/validate đã qua — để
+    # không để lại thư mục rỗng mồ côi khi input không hợp lệ (xem docstring
+    # ach_service.gop_phub()).
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = xuat_excel_phub_gop(output_dir, ngay_list, df_ketqua, canh_bao, log_callback=log_callback)
+
+    return {'tong_ket': thong_ke, 'canh_bao': canh_bao, 'ten_file': os.path.basename(out_path)}

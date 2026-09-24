@@ -22,6 +22,7 @@ from backend.core.enums import StaffRole
 from backend.database import get_db
 from backend.main import app
 from backend.services import ach_service
+from tests.test_ach_phub_gop import _gw_csv_bytes, _phub_xlsx_bytes, _timeout_csv_bytes
 
 _STAFF_ID = 7
 
@@ -135,6 +136,53 @@ class TestQuyenPhubGop:
         r = client_chi_xem.get(
             '/api/ach/phub-gop/khong-ton-tai/tai', params={'filename': 'a.xlsx'})
         assert r.status_code == 404
+
+
+# PR #136 (review Khánh, 24/09/2026): /phub-gop trước đây chạy phần nặng qua
+# asyncio.to_thread() — bể luồng RIÊNG, ngoài mọi giới hạn RAM/số lượt của hệ
+# thống. Nay đi qua run_heavy() + chay_tach(phub_gop.gop_phub_tu_file, ...),
+# đúng khuôn backend/services/swift_recon/tach.py. Test tĩnh
+# (tests/test_doi_chieu_chay_tien_trinh_rieng.py::test_api_khong_dung_asyncio_to_thread)
+# đã canh KHÔNG còn asyncio.to_thread trong toàn bộ backend/api/ — ở đây kiểm
+# THÊM hành vi thật của endpoint (chạy đúng, dọn sạch input tạm).
+class TestPhubGopChayTach:
+    def test_gop_that_qua_run_heavy_va_don_sach_thu_muc_tam(
+        self, client_duoc_chay, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setattr(ach_service, 'TEMP_DIR', tmp_path)
+        files = [
+            ('files', ('pHub.xlsx', _phub_xlsx_bytes([
+                {'chi_nhanh': '1400', 'so_thanh_cong': 'MSG_A', 'trace2': '111',
+                 'so_tien': '500', 'ngay_gui': '15/09/2026 10:00:00'},
+            ]), 'application/vnd.ms-excel')),
+            ('files', ('GW_15.csv', _gw_csv_bytes(
+                [{'MSGREF': 'MSG_A', 'Ghi chú': 'ACSP:AUTH'}]), 'text/csv')),
+            ('files', ('TIMEOUT_15.csv', _timeout_csv_bytes([
+                {'CHI_NHANH': '9999', 'TRACE': '999', 'SE_TRACE': '', 'SO_TIEN': '999',
+                 'NGAY_DOI_CHIEU': '20260915'},
+            ]), 'text/csv')),
+        ]
+        r = client_duoc_chay.post('/api/ach/phub-gop', files=files)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body['tong_ket'] == {
+            'hoan_thanh': 1, 'tt_lenh_loi': 0, 'trang_thai_khac': 0, 'tong': 1}
+        assert body['ten_file'] == 'GOP_PHUBLOI_20260915_20260915.xlsx'
+
+        # Kết quả nằm trong TEMP_DIR/<ma>/ — thư mục INPUT tạm (phubgop_in_*)
+        # phải đã bị xoá sạch (đúng nguyên tắc "không lưu gì trên server ngoài
+        # đúng kết quả cuối", server không giữ lại file người dùng vừa tải lên).
+        con_lai = sorted(p.name for p in tmp_path.iterdir())
+        assert con_lai == [body['ma']], f"con sot thu muc tam: {con_lai}"
+
+    def test_gop_loi_van_don_sach_thu_muc_tam(self, client_duoc_chay, tmp_path, monkeypatch):
+        """File lỗi (400) — thư mục input tạm vẫn phải được dọn (finally),
+        không để lại rác trên đĩa mỗi lần người dùng gộp thất bại."""
+        monkeypatch.setattr(ach_service, 'TEMP_DIR', tmp_path)
+        r = client_duoc_chay.post(
+            '/api/ach/phub-gop', files={'files': ('a.txt', b'khong hop le', 'text/plain')})
+        assert r.status_code == 400
+        assert list(tmp_path.iterdir()) == []
 
 
 # ─── D4 (23/09/2026) — GET /api/ach/ket-qua + vá /download theo chủ job ───────
