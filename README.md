@@ -503,6 +503,9 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
     315 KB cho kho 1 năm; đo trên dữ liệu nhân theo năm, 5 năm là 513 ms / 5,1 MB và còn tăng
     tiếp) trong khi giao diện không đọc tới. Chi tiết tập lấy ở `GET /api/bundles/groups/{id}` —
     mọi đường in bìa / tải bìa đều đi qua đó, không đổi
+  - Tải bìa cả nhóm: phần chuẩn bị mẫu docxtpl (làm sạch XML + dịch Jinja) chỉ chạy **một lần**
+    rồi dùng lại cho mọi tập; nhóm 31 tập 2,0 s → 0,8 s (máy dev). Render bật **autoescape** —
+    tên có `&`/`<` (vd "KSNB&HTVH") không còn bị cắt. Nút "Tải xuống" hiện vòng xoay khi đang dựng
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa **ngày** và **số chứng từ** ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật. Sửa ngày chỉ ghi lại `cover_units` của tập, **không đụng** số liệu bàn giao gốc của phòng nguồn (`document_entries`); mỗi dòng phải còn ít nhất một ngày, xoá hết ngày thì báo lỗi và giữ nguyên số đang nhập
   - *Tab "In bìa hồ sơ"*: Nạp file Excel tra cứu hồ sơ (`LT_HS_TRACUU_*.xls`) xuất từ chương trình lưu trữ → điền vào mẫu bìa **M01/LHS** (`templates/Phòng KSNB&HTVH/Bàn giao cho lưu trữ/Bia_ho_so.docx`), giữ nguyên toàn bộ định dạng của mẫu. Lấy cột **I** *Mã vạch* (ký hiệu thông tin + chuỗi barcode), cột **C** *Tên hồ sơ* (dòng tiêu đề + **Ngày mở** = ngày **đầu tiên** xuất hiện trong tên), cột **F** *Ngày CVKT*, cột **G** *Số tờ*. Chọn hồ sơ cần in trên bảng rồi tải về **1 file Word nhiều trang** (mỗi hồ sơ 1 trang) hoặc **ZIP mỗi hồ sơ 1 file**. Máy in phải cài font **"3 of 9 Barcode"**, nếu không dòng mã vạch in ra thành chữ thường và máy quét không đọc được
 - **Báo cáo** (menu con):

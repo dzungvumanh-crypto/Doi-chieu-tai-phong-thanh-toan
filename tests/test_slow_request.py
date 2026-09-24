@@ -130,6 +130,12 @@ def test_nguong_theo_duong_dan(monkeypatch):
     assert sr._nguong_ms("/api/swift-recon/parse-preview") == 10000
     assert sr._nguong_ms("/api/doi-chieu-citad/extension-download") == 10000
     assert sr._nguong_ms("/api/doi-chieu-citad-nostro/month-summary/export") == 10000
+    # Dựng bìa Word theo nhóm / cả phòng — việc nặng có chủ đích
+    assert sr._nguong_ms("/api/bundles/groups/39/cover-all") == 8000
+    assert sr._nguong_ms("/api/bundles/cover-bulk") == 8000
+    # Bìa lẻ vốn nhanh — giữ ngưỡng chung để còn thấy khi nó chậm bất thường
+    assert sr._nguong_ms("/api/bundles/12/cover") == 1500
+    assert sr._nguong_ms("/api/bundles/archive-cover-print") == 1500
     # Khớp theo ĐOẠN: /api/ach không được nuốt một module khác trùng đầu chữ
     assert sr._nguong_ms("/api/achilles/x") == 1500
     # Đoạn riêng, KHÔNG nằm trong tiền tố _kenh_core — khớp theo đoạn từng làm rơi mất module này

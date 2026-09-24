@@ -4,6 +4,17 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Gom tập chứng từ - **Tải bìa cả nhóm nhanh hơn khoảng 2,5 lần**
+    + ✅ Bấm **Tải xuống** bìa của một nhóm tập: nhóm khoảng 30 tập trước mất 3–3,5 giây, nay còn khoảng
+      1,5 giây. Nguyên nhân: mỗi tập, chương trình đọc lại và chuẩn bị lại mẫu bìa từ đầu dù mẫu không đổi —
+      nay chỉ chuẩn bị một lần rồi dùng cho mọi tập
+    + ✅ Nút **Tải xuống** hiện vòng xoay trong lúc đang tạo bìa và không bấm lại được — trước đây mấy giây chờ
+      không có dấu hiệu gì nên dễ bấm hai lần
+    + ✅ Tên phòng / tên người có ký tự **`&`** hoặc **`<`** (vd "Phòng KSNB&HTVH") nay in đủ trên bìa — trước đây
+      bị cắt mất phần chữ phía sau mà không báo lỗi
+    + ℹ️ Màn *Nhật ký hệ thống* không còn báo **"Request chậm"** cho việc tải bìa dưới 8 giây — đây là việc tạo
+      file Word, cùng mức với xuất Excel/Word khác
+
 - 24/09/2026 Giám sát hệ thống - **Nền tối + biểu đồ nhìn lại 24 giờ**
     + ✅ Màn hình chuyển sang **nền tối** cho đỡ chói mắt khi mở lâu
     + ✅ **Ba biểu đồ 24 giờ qua** ngay đầu màn hình — để mở lên là biết *cả ngày hôm nay đã có lúc nào
