@@ -46,7 +46,10 @@ _NGUONG_RIENG = (
 # nặng có chủ đích ở bất kỳ module nào. Xét theo TỪNG ĐOẠN và dùng "chứa" chứ không
 # "bắt đầu bằng": tên route thật có đủ kiểu — `/export-db`, `/export-summary`,
 # `/parse-preview`, `/extension-download`, `/month-summary/export`.
-_TU_VIEC_NANG = ("export", "preview", "download")
+# Bìa cả nhóm / cả phòng — mỗi tập một lần docxtpl, nhóm 31 tập ~1,4 s trên máy chủ
+# (card HN7). Cố ý KHÔNG dùng "cover" trần: bìa lẻ `/{id}/cover` chỉ ~0,1 s, nâng lên
+# 8 s là mất cảnh báo khi nó hỏng; `archive-cover-*` giữ ngưỡng chung như trước.
+_TU_VIEC_NANG = ("export", "preview", "download", "cover-all", "cover-bulk")
 _MS_NANG = 8000
 
 
@@ -185,7 +188,9 @@ def trang_thai(tu: float) -> str:
             f"kết nối CSDL {s['csdl_dang_muon']}/{s['csdl_toi_da']} xếp cổng {s['csdl_xep_cong']}",
             f"đang xử lý {s['dang_xu_ly']}",
             f"việc nặng {s['nang_dang_chay']}/{s['nang_toi_da']}",
-            f"đối chiếu {len(s['doi_chieu'])}",
+            # Kèm TÊN: "đối chiếu 1" không trả lời được câu hỏi thật — lúc đó cái nào đang chạy
+            f"đối chiếu {len(s['doi_chieu'])}"
+            + (f" ({', '.join(j['ten_module'] for j in s['doi_chieu'])})" if s["doi_chieu"] else ""),
         ]
         return " · ".join(phan)
     except Exception as exc:

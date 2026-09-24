@@ -53,6 +53,112 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-24</p>
 
+  <!-- HN7 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN7</span>
+      <span class="card-title">Bìa tập chứng từ (<code>cover-all</code>) chậm 2,7–3,5 s — nhớ phần chuẩn bị mẫu docxtpl, khoá nút tải</span>
+      <span class="badge badge-done">Xong — máy dev 2,0 s → 0,8 s (31 tập)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Log 24/09/2026: 3 dòng <code>slow.request</code> cho <code>GET /api/bundles/groups/39/cover-all</code>, lúc không có đối chiếu nào.
+        Mọi chỉ số tải đều thấp (luồng 0/40, CSDL 0–1/48, việc nặng 0–1/4) — không phải hệ thống nghẽn mà chính việc dựng
+        file chậm. <code>trễ tổng</code> 288–384 ms là luồng dựng bìa giành GIL với event loop, đúng kiểu card 144 nhưng nhỏ.</p>
+
+      <table>
+        <tr><th>Bước (lặp cho MỖI tập)</th><th>31 tập, trước</th><th>Sau</th></tr>
+        <tr><td>Regex làm sạch XML mẫu (<code>patch_xml</code>)</td><td>620 ms</td><td>1 lần, nhớ theo chuỗi</td></tr>
+        <tr><td>Dịch XML thành mẫu Jinja (<code>from_string</code>, 7 phần/tập)</td><td>580 ms</td><td>1 lần/phần, nhớ theo chuỗi</td></tr>
+        <tr><td><code>tpl.save()</code> ra zip rồi <code>Document()</code> đọc lại</td><td>~650 ms</td><td>Bỏ — dùng thẳng <code>tpl.docx</code></td></tr>
+        <tr><td>Mở file mẫu (<code>init_docx</code>)</td><td>520 ms</td><td>Giữ nguyên (dưới)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Nhớ qua điểm móc công khai, không viết lại luồng render của docxtpl</div>
+      <p>Có thể nhanh hơn nữa nếu tự dựng XML thân rồi bỏ docxtpl — nhưng phải chép lại <code>fix_tables</code>,
+        <code>resolve_listing</code>, <code>fix_docpr_ids</code> và gãy khi nâng thư viện. Thay vào đó chỉ dùng hai chỗ docxtpl mở sẵn:
+        tham số <code>jinja_env</code> (môi trường tự nhớ <code>from_string</code>) và lớp con ghi đè <code>patch_xml</code> (hàm thuần,
+        không đọc <code>self</code> — đã soát mã 0.16.8). Khoá nhớ là chính chuỗi XML của mẫu: sửa file <code>bia_mau_goc.docx</code>
+        thì chuỗi đổi, tự dịch lại, không cần khởi động lại. Kiểm bằng cách so từng phần zip với bản cũ: <code>document.xml</code>
+        giống từng byte; chỉ <code>core.xml</code> khác cách viết thẻ rỗng (<code>&lt;dc:title/&gt;</code> ↔ <code>&lt;dc:title&gt;&lt;/dc:title&gt;</code>).</p>
+      <p>Bỏ <code>save()</code> an toàn vì <code>DocxTemplate.save()</code> khi không có ảnh/file nhúng cần thay chỉ gọi <code>docx.save()</code>.
+        Thêm ảnh vào mẫu bìa (<code>replace_pic</code>, <code>InlineImage</code>) thì phải xét lại chỗ này.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Thêm <code>cover-all</code> / <code>cover-bulk</code> vào nhóm việc dựng file của <code>slow_request</code></div>
+      <p>Không dùng từ "cover" trần (phản biện chỉ ra): nó khớp cả bìa lẻ <code>/{id}/cover</code> (~0,1 s) và
+        <code>archive-cover-*</code> — nâng chúng lên 8 s là mất cảnh báo đúng lúc chúng hỏng.</p>
+      <p>Sau khi tăng tốc, nhóm 31 tập ước ~1,4 s trên máy chủ (tỉ lệ máy chủ/dev đo được 3,4/2,0) — sát ngưỡng 1,5 s; nhóm lớn hơn
+        và <code>cover-bulk</code> (cả phòng) vẫn sẽ vượt. Đây là dựng file Word, cùng loại với <code>export</code>/<code>download</code>
+        vốn đã có ngưỡng 8 s. Ngưỡng 8 s vẫn bắt được ca hỏng thật.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Bật autoescape — sửa lỗi cắt chữ có sẵn</div>
+      <p>Trước đây render với autoescape tắt: tên có <code>&amp;</code> / <code>&lt;</code> làm XML hỏng, <code>fix_tables</code> đọc bằng
+        <code>recover=True</code> nên lặng lẽ cắt chữ (thử: <code>"Nguyễn Văn &lt;&amp;&gt;"</code> in ra <code>"Nguyễn Văn &gt;"</code>). CSDL dev có
+        phòng <b>"Phòng KSNB&amp;HTVH"</b> — không phải phòng nguồn nên chưa có tập nào dính. Mọi giá trị ngữ cảnh là chuỗi thường,
+        không có RichText/Listing, nên bật autoescape không đổi gì với tên bình thường (đã so: chỉ tên có ký tự đặc biệt khác đi).</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Khoá nút "Tải xuống" khi đang dựng</div>
+      <p>Log có hai lượt chồng nhau cách 2 s (<code>đang xử lý 2</code>): thông báo "Đang tải bìa..." chỉ hiện <i>sau</i> khi tải xong,
+        suốt mấy giây chờ không có dấu hiệu gì nên người dùng bấm lại. Nay nút hiện vòng xoay (<code>props("loading")</code> — Quasar bỏ
+        qua lượt bấm khi đang loading), theo mẫu có sẵn ở <code>reports.py</code>.</p>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm</span></div>
+      <ul>
+        <li><b>Phiếu nghỉ phép cùng lỗi autoescape</b>: <code>leaves.py</code> (~dòng 2714) gọi <code>tpl.render(ctx)</code> không autoescape,
+          mà "lý do nghỉ" do người dùng tự gõ — "khám bệnh &amp; ..." sẽ bị cắt trên đơn in. Chưa sửa vì đổi đầu ra của đơn đang có
+          chữ ký/cache PDF theo nội dung (<code>leave_pdf.py</code>), cần rà riêng.</li>
+        <li>Mở file mẫu 31 lần (520 ms) và đọc chữ từng ô để căn giữa (240 ms) còn lại. Mở một lần rồi nhân bản <code>Document</code>
+          không có đường công khai trong python-docx — không đáng đánh đổi độ phức tạp.</li>
+        <li>Bìa lẻ <code>/{id}/cover</code> là <code>def</code> không qua <code>run_heavy</code> — 1 tập ~40 ms, không đáng.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- NK4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">NK4</span>
+      <span class="card-title">Nhật ký "việc nặng" — lúc request chậm thì máy chủ đang bận việc gì</span>
+      <span class="badge badge-done">done · 2026-09-24</span>
+    </div>
+    <div class="card-body">
+      <p>Bắt đầu 14/09/2026 (<code>/api/staff/</code> chậm 1,5 s, log không có dòng nào nói lúc đó Song phương đang chạy — phải
+        hỏi người dùng nhớ lại). Bản 14/09 bị bỏ dở chưa commit; làm lại trên develop 24/09 vì mã nền đã đổi hẳn (card 150:
+        đối chiếu chạy ở tiến trình riêng).</p>
+
+      <table>
+        <tr><th>Câu hỏi khi thấy dòng chậm</th><th>Trả lời bằng</th></tr>
+        <tr><td>Lượt đối chiếu nào đang chạy?</td><td>Dòng <code>slow.request</code> kèm tên: <code>đối chiếu 1 (Song phương ĐI)</code> — <span class="pill pill-green">mới</span></td></tr>
+        <tr><td>Lượt đó bắt đầu / xong lúc nào?</td><td><code>chay_tach()</code> đã ghi "chạy ở tiến trình riêng (PID …)" / "xong sau … s" — có từ card 150</td></tr>
+        <tr><td>Việc nặng gắn request (xuất file, in đơn) nào chạy lâu?</td><td>Logger <code>viec_nang</code> trong <code>run_heavy()</code>, ngưỡng <code>HEAVY_LOG_MS</code> — <span class="pill pill-green">mới</span></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Không đưa lại <code>chay_nen()</code> của bản 14/09</div>
+      <p>Bản cũ bọc mọi luồng đối chiếu trong <code>chay_nen()</code> để ghi BẮT ĐẦU/KẾT THÚC. Nay <code>chay_tach()</code> đã ghi hai mốc đó,
+        nên bọc thêm là sửa 7 service + 7 API chỉ để mỗi mốc ghi hai lần. Phần duy nhất bản cũ có mà develop thiếu — "chạy cùng với
+        module nào" — nay nằm ngay trong dòng chậm, đúng chỗ người đọc cần.</p>
+      <div class="caution"><b>Hở còn lại:</b> <code>DOI_CHIEU_TIEN_TRINH=0</code> (chế độ khẩn cấp, chạy trong luồng) thì
+        <code>chay_tach()</code> không ghi mốc bắt đầu/kết thúc. Tên lượt đang chạy vẫn có trong dòng chậm — chấp nhận.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Ngưỡng tính cả thời gian chờ suất, và tách riêng ra</div>
+      <p><code>slow.request</code> của đường xuất file có ngưỡng 8 s, nên một lượt xuất 3 s làm màn khác chậm lây mà không để lại dấu
+        vết. Ngưỡng 1 s đo từ lúc gọi <code>run_heavy()</code>; dòng log tách "chạy" với "chờ suất" — chờ lâu nghĩa là cả
+        <code>MAX_HEAVY</code> suất đang bận, chạy lâu nghĩa là chính việc đó nặng. Ghi SAU khi xong nên số "việc nặng khác còn chạy"
+        không đếm chính nó.</p>
+      <p>Hàm bọc chung (SWIFT: <code>run_heavy(_xuat_tu_tep, tach.xuat_tong_hop, …)</code>) in kèm tên hàm được bọc — không thì
+        mọi lượt xuất SWIFT trông như nhau. Quy tắc chung "tham số đầu là hàm (có <code>__qualname__</code>) thì in kèm", không
+        đặc cách tên hàm nào. Không dùng <code>callable()</code>: <code>sqlite3.Connection</code> cũng gọi được, và CITAD truyền
+        <code>db</code> làm tham số đầu ở 4 chỗ — phản biện bắt được trước khi mở PR.</p>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm</span></div>
+      <ul>
+        <li>Việc nặng chạy qua <code>threading.Thread</code> tự tạo (dọn log, dọn temp, sao lưu, hâm Word) không qua
+          <code>run_heavy()</code> nên không có dòng <code>viec_nang</code>. Sao lưu đã tự ghi log riêng; mấy việc còn lại ngắn.</li>
+        <li>Bản 14/09 (patch + stash <code>log-viec-nang ban cu 14/09</code> ở worktree cũ) không còn giá trị sau PR này.</li>
+      </ul>
+    </div>
+  </div>
+
   <!-- ST1 -->
   <div class="card">
     <div class="card-header">
@@ -21050,6 +21156,113 @@ This may happen if you try to create UI from a background task.</pre>
         <code>tests/test_ach_quyen.py</code>). <code>python -m pytest -q</code> toàn dự án:
         <b>2031 passed, 0 failed</b> (2027 + 4). 0 dòng lệch, không dùng %.</div>
 
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">168</span>
+      <span class="card-title">Giám sát hệ thống: nền tối + biểu đồ — chỗ nào đáng vẽ, chỗ nào không (2026-09-24)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Nguyên tắc chọn hình</span> "dữ liệu này có việc gì" quyết định, không phải "cho đẹp"</div>
+      <p>Một con số hiện tại thì <b>biểu đồ một cột là lỗi</b>, không phải trang trí. Chỉ ba loại dữ liệu trên màn này có "hình":
+        phần–toàn thể, so độ lớn giữa vài mục, và diễn biến theo thời gian. Phần còn lại giữ nguyên số hoặc chuyển sang thanh mức.</p>
+      <table>
+        <tr><th>Khối</th><th>Chọn</th><th>Vì sao</th></tr>
+        <tr><td><b>CPU · RAM · ba bể tài nguyên · độ phản hồi — 24 giờ</b></td><td>Ba biểu đồ đường <span class="pill pill-green">mới</span></td>
+          <td>Người dùng chốt 24/09: "không thể theo dõi 24/24, lúc vào xem cần thấy tổng quát thời gian qua". Xem mục <i>Bộ lấy mẫu</i> dưới đây</td></tr>
+        <tr><td><b>Lỗi/cảnh báo theo giờ</b> · <b>Đăng nhập theo giờ</b></td><td>Cột xếp chồng 24 giờ <span class="pill pill-green">mới</span></td>
+          <td>Trả lời câu mà con số tổng che mất: "dồn vào một lúc hay rải đều". Cụm 11 lượt đăng nhập sai trong một giờ = dò mật khẩu;
+            tổng "14 lượt/24 giờ" thì không đọc ra. Đủ 24 ô kể cả giờ trống — thiếu ô là trục thời gian co lại, hai cột cách nhau 6 tiếng trông như liền nhau</td></tr>
+        <tr><td><b>Dung lượng dự án chiếm</b></td><td>Cột ngang so độ lớn <span class="pill pill-amber">đã đổi</span></td>
+          <td>Bản đầu vẽ cột xếp chồng "toàn bộ ổ đĩa" — <b>ảnh chụp cho thấy vô dụng</b>: Windows + phần trống chiếm 99 %, bốn mục của
+            dự án gộp lại là một vệt không đọc được. Tách làm hai: ổ còn bao nhiêu chỗ → thanh mức; dự án chiếm chỗ ở đâu → cột ngang có nhãn số</td></tr>
+        <tr><td><b>CPU · RAM · các bể · tuổi bản sao lưu — giá trị HIỆN TẠI</b></td><td>Thanh mức, KHÔNG biểu đồ</td>
+          <td>Đều là <b>một tỷ lệ so với trần</b>. Thanh mức đọc nhanh hơn mọi loại biểu đồ và tốn 8px. Vẽ đồng hồ/vòng tròn cho một
+            con số là đổi chỗ đọc được lấy chỗ trang trí. (Diễn biến theo thời gian của chính các số này nằm ở ba biểu đồ 24 giờ — hai việc khác nhau)</td></tr>
+        <tr><td><b>Tên máy, PID, thời gian chạy, giờ NTP, lỗi gần nhất, lượt đối chiếu đang chạy, danh sách cảnh báo</b></td><td>Chữ / số</td>
+          <td>Không phải số để so — là sự việc cụ thể. Ba con số headline (lỗi / cảnh báo / request chậm) để cỡ lớn, KHÔNG dựng thành biểu đồ ba cột</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Đảo quyết định của card 158</span> nay CÓ một bộ đo chạy nền — bộ duy nhất của dự án</div>
+      <p>Card 158 cố ý không đo gì chạy nền: mọi số là ảnh chụp lúc mở trang. Nhưng người vận hành không ngồi canh 24/24 — mở trang lúc 3h chiều
+        thấy RAM 40 % thì <b>không cách nào biết 10h sáng nó đã lên 94 %</b>, mà đó mới là thứ cần biết. Người dùng chốt 24/09/2026.
+        <code>backend/services/giam_sat_mau.py</code>: một task trên event loop, mỗi phút một dòng.</p>
+      <table>
+        <tr><th>Quyết định</th><th>Vì sao</th></tr>
+        <tr><td><b>Lưu vào bảng CSDL</b> (<code>monitor_samples</code>), không phải bộ nhớ</td>
+          <td>Restart backend (deploy, treo, mất điện) là mất sạch lịch sử — mà <b>vừa restart xong lại đúng là lúc cần xem trước đó đã xảy ra chuyện gì</b>.
+            1 dòng/phút × 7 ngày ≈ 10.000 dòng, vài trăm KB; tự dọn mỗi ~60 lần ghi</td></tr>
+        <tr><td>Mỗi ô 10 phút lấy <b>MAX</b>, không lấy trung bình</td>
+          <td>Câu hỏi là "có lúc nào cận ngưỡng". Trung bình 10 phút biến một phút chạm 95 % thành 45 % — tức là xoá đúng thứ đi tìm</td></tr>
+        <tr><td>Ô không có mẫu trả <b><code>None</code></b>, không phải 0; đường biểu đồ <b>không</b> <code>connectNulls</code></td>
+          <td>Quãng backend không chạy phải hiện ra là <b>vết đứt</b>. Tô 0 là nói dối rằng lúc ấy máy rảnh; nối liền là vẽ ra dữ liệu không tồn tại</td></tr>
+        <tr><td>Ba bể quy về <b>% sức chứa của chính nó</b> rồi vẽ chung một trục</td>
+          <td>Luồng 40, kết nối 48, việc nặng 4 — ba đơn vị khác nhau. Quy về % là cách duy nhất chung được một trục; <b>hai trục y là điều cấm</b>,
+            vì tỷ lệ giữa hai thang do người vẽ tự đặt nên biểu đồ tự bịa ra tương quan</td></tr>
+        <tr><td>Độ phản hồi (ms) là biểu đồ <b>riêng</b></td><td>Cùng lý do: ms không chung trục được với %</td></tr>
+        <tr><td>CPU tính bằng <b>hiệu hai lần đọc đồng hồ CPU cách nhau 1 phút</b></td>
+          <td>Trung bình cả phút, đúng câu hỏi hơn ảnh chụp 0,3 giây. Ô "CPU hiện tại" nay cũng lấy từ mẫu này → bỏ được <code>time.sleep(0,3)</code>
+            trên đường request mỗi lần mở/làm mới trang</td></tr>
+        <tr><td>Task chạy trên event loop, phần <b>ghi</b> đẩy sang luồng</td>
+          <td>Bộ đếm luồng/bể của anyio chỉ đọc được trên loop; còn ghi đĩa thì không được chặn loop. Kết nối CSDL <b>riêng, ngắn</b> — không mượn bể
+            (bể là của request; task nền giữ suất trong đó là lấy mất chỗ của người dùng)</td></tr>
+        <tr><td>Một lượt ghi hỏng chỉ <code>_log.warning</code>, không giết task</td>
+          <td>CSDL khoá / đĩa đầy không được làm chết cả bộ đo — nhưng phải kêu, im lặng nghĩa là biểu đồ thủng mà không ai biết vì sao</td></tr>
+      </table>
+      <p><b>Đã bỏ</b> biểu đồ "độ phản hồi 5 phút" (ô 5 giây, đọc thẳng deque của <code>slow_request</code>) cùng hàm <code>chuoi_tre()</code>:
+        biểu đồ 24 giờ phủ luôn việc của nó, giữ cả hai là hai chỗ cùng trả lời một câu hỏi.</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — 1 lỗi phải sửa, 3 điểm nên sửa, đã sửa cả 4</div>
+      <table>
+        <tr><th>Mức</th><th>Lỗi</th><th>Sửa</th></tr>
+        <tr><td><b>Phải sửa</b></td>
+          <td><b>Trục thời gian của cả ba biểu đồ 24 giờ trống trơn ở ~90 % số lần mở trang.</b> Ô tính lùi từ phút hiện tại
+            (10:37 → 10:37 / 10:27 / …) nên không mốc nào rơi vào giờ tròn, mà nhãn chỉ vẽ ở giờ tròn. <b>Ảnh chụp của tôi không lộ ra</b>
+            vì dữ liệu mẫu rơi đúng phút 40</td>
+          <td>Cắt <code>den</code> xuống <b>lưới <code>buoc_phut</code></b> (10:30, 10:40…). Thêm lợi: biểu đồ đứng yên giữa các lượt
+            làm mới 30 s thay vì trôi từng chút. <code>test_o_thoi_gian_nam_dung_luoi_10_phut_du_mo_trang_luc_nao</code> thử cả phút 37/5/0/59</td></tr>
+        <tr><td>Nên sửa</td><td>Mẫu mồi <code>chup()</code> nằm NGOÀI <code>try</code> của vòng lặp → ném lúc khởi động là task chết im,
+          biểu đồ trống vĩnh viễn trong khi <code>/health</code> vẫn xanh</td><td>Bọc <code>try</code> + log, chạy tiếp</td></tr>
+        <tr><td>Nên sửa</td><td><code>doc_lich_su</code> nuốt MỌI <code>sqlite3.Error</code> (kể cả <i>database is locked</i>) không log</td>
+          <td>Chỉ im lặng với <code>no such table</code> (CSDL cũ chưa migrate); còn lại <code>_log.warning</code></td></tr>
+        <tr><td>Nhỏ</td><td>Gọi <code>tre_loop_ms()</code> hai lần mỗi mẫu; chú thích nói sai nhãn ô</td>
+          <td>Dùng lại <code>loop_chan_max_ms</code> mà <code>so_lieu_tai()</code> đã đo; sửa chú thích</td></tr>
+      </table>
+      <p>Phản biện <b>đo trực tiếp</b> và xác nhận các điểm còn lại: <code>DELETE … WHERE ts &lt; ?</code> đi theo chỉ mục (không quét bảng);
+        <code>doc_lich_su</code> với bảng đầy 10.080 dòng mất <b>19 ms</b>; CPU tính bằng hiệu bộ đếm cộng dồn nên máy ngủ / NTP nhảy không
+        làm sai tỷ lệ; chỉ một bộ lấy mẫu chạy (không có worker thứ hai, tiến trình con đối chiếu không chạy lifespan).
+        <b>Mới một lượt Sonnet</b> cho một thay đổi chạm vòng đời tiến trình và ghi vào CSDL nghiệp vụ.</p>
+
+      <div class="label"><span class="pill pill-blue">Nền tối</span> chỉ riêng trang này</div>
+      <p>Bước màu <b>chọn riêng cho nền tối</b>, không phải lật màu của nền sáng. Nền trang <code>#0d0d0d</code>, nền thẻ/vùng vẽ
+        <code>#1a1a19</code>. Màu trạng thái luôn kèm biểu tượng + chữ, không để màu nói một mình.</p>
+      <table>
+        <tr><th>Chi tiết</th><th>Lý do</th></tr>
+        <tr><td>Không dùng <code>_page_header()</code></td><td>Tiêu đề của nó là chữ đỏ đậm cho nền sáng, đặt lên nền đen gần như không đọc được</td></tr>
+        <tr><td>Không dùng class Tailwind kiểu <code>bg-[#0d0d0d]</code></td><td>Bản Tailwind đóng gói sẵn của NiceGUI có thể không sinh class giá trị tuỳ ý — dùng <code>style()</code></td></tr>
+        <tr><td>Thanh mức dựng bằng <code>div</code> lồng, bỏ <code>ui.linear_progress</code></td><td>Quasar tô đường ray bằng chính màu chính ở độ mờ thấp → trên nền tối gần như vô hình</td></tr>
+        <tr><td>Nút/công tắc ép tông trung tính</td><td>Màu mặc định Quasar là xanh dương — <b>trùng màu đang dùng cho dữ liệu</b> trong biểu đồ (ảnh chụp lần 2 lộ ra)</td></tr>
+        <tr><td>Nhãn thanh mức đặt TRÊN thanh; lưới thẻ <code>align-items:start</code></td><td>Nhãn dưới bị mắt gán cho thanh kế tiếp; không có align-items thì mọi thẻ bị kéo cao bằng thẻ cao nhất hàng</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span> có nhìn bằng mắt, không chỉ chạy test</div>
+      <ul>
+        <li>Dựng trang demo dùng <b>chính các hàm vẽ thật</b> + dữ liệu mẫu, chụp bằng Chrome headless. Bốn lượt chụp lộ ra 6 lỗi mà test
+          không bao giờ bắt được: cột ổ đĩa vô dụng, nhãn trục bị cắt, nhãn ngưỡng tràn mép, nút trùng màu dữ liệu, nhãn thanh mức đặt sai chỗ,
+          thẻ bị kéo cao.</li>
+        <li><code>tests/test_monitor.py</code>: đủ 24 ô giờ kể cả giờ trống; tách đúng đăng nhập thành công/sai theo giờ;
+          cột dung lượng cộng khớp phần đã dùng; lịch sử lấy ĐỈNH từng ô và để trống ô không có mẫu; dòng <code>ts</code> hỏng không
+          làm hỏng cả biểu đồ; dọn dòng quá hạn; và một test <b>chạy thật task nền</b> (<code>bat_dau</code> → ngủ → có dòng trong CSDL)
+          — test từng hàm rời không bắt được lỗi nối dây, mà đó đúng là kiểu hỏng làm biểu đồ trống trơn.</li>
+        <li>Lỗi test bắt được ngay: mẫu ghi trong phút hiện tại (có phần giây) rơi ra ngoài ô cuối → ô người xem nhìn đầu tiên luôn trống.</li>
+        <li>Hai lỗi nữa chỉ ảnh chụp mới thấy: 24 nhãn giờ trên ~430 px dính thành vệt "16:07:08:09…" (nay 3 giờ một nhãn); trục mili giây
+          hiện "1,200 ms" — ECharts tự chèn dấu phẩy hàng nghìn và NiceGUI <b>không cho</b> truyền hàm JS để đổi, mà trong tiếng Việt dấu
+          phẩy là dấu thập phân nên đọc thành 1,2 ms → bỏ hẳn nhãn trục dọc của biểu đồ đó, vạch ngưỡng + câu chú dẫn + tooltip đã đủ.</li>
+      </ul>
     </div>
   </div>
 

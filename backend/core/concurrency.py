@@ -20,6 +20,7 @@ nhau; khác biệt duy nhất là giới hạn lại thì không ai bị bỏ đ
 import functools
 import logging
 import os
+import time
 
 import anyio
 import anyio.to_thread
@@ -37,6 +38,10 @@ def _doc_so(ten_bien: str, mac_dinh: int) -> int:
 
 
 MAX_HEAVY = _doc_so("MAX_HEAVY_TASKS", 4)
+# Việc nặng (tính cả thời gian chờ suất) từ ngưỡng này trở lên thì ghi một dòng `viec_nang`
+HEAVY_LOG_MS = _doc_so("HEAVY_LOG_MS", 1000)
+# Tên logger ngắn, không dấu: người vận hành lọc app.log cùng `slow.request`
+_log_viec = logging.getLogger("viec_nang")
 
 # Tạo trễ: anyio.CapacityLimiter cần event loop đang chạy, không dựng được ở
 # thời điểm import module.
@@ -60,7 +65,53 @@ async def run_heavy(fn, *args, **kwargs):
     này không có tác dụng.
     """
     call = functools.partial(fn, *args, **kwargs) if (args or kwargs) else fn
-    return await anyio.to_thread.run_sync(call, limiter=_get_limiter())
+    limiter = _get_limiter()
+    t_vao = time.monotonic()
+    moc = {}
+
+    def _do():
+        moc["chay"] = time.monotonic()      # tới đây mới có suất — trước đó là xếp hàng
+        return call()
+
+    try:
+        return await anyio.to_thread.run_sync(_do, limiter=limiter)
+    finally:
+        _ghi_viec_nang(fn, args, limiter, t_vao, moc.get("chay"))
+
+
+def _ten_ham(fn) -> str:
+    ten = getattr(fn, "__qualname__", None) or repr(fn)
+    mod = (getattr(fn, "__module__", None) or "").removeprefix("backend.")
+    return f"{mod}.{ten}" if mod else ten
+
+
+def _ghi_viec_nang(fn, args, limiter, t_vao: float, t_chay: float | None) -> None:
+    """Một dòng cho việc nặng đủ lâu — mốc để đối chiếu với `slow.request` của màn khác.
+
+    `slow.request` chỉ kêu khi CHÍNH request đó quá ngưỡng (xuất file có ngưỡng riêng 8 s),
+    nên một lượt xuất 3 giây làm màn khác chậm lây mà không để lại dấu vết nào.
+    Tách "chờ suất" khỏi "chạy": chờ lâu nghĩa là cả `MAX_HEAVY` suất đang bận.
+    Ghi SAU khi xong nên suất của chính việc này đã trả — con số là các việc khác.
+    """
+    xong = time.monotonic()
+    tong_ms = (xong - t_vao) * 1000
+    if tong_ms < HEAVY_LOG_MS:
+        return
+    cho_ms = ((t_chay or xong) - t_vao) * 1000
+    ten = _ten_ham(fn)
+    # Hàm bọc chung (`_xuat_tu_tep(tach.xuat_tong_hop, …)` của SWIFT) — tên bọc không nói
+    # đang xuất gì, nên kèm hàm được bọc. Đòi `__qualname__`, không chỉ callable():
+    # `sqlite3.Connection` cũng gọi được (CITAD truyền `db` làm tham số đầu)
+    if args and getattr(args[0], "__qualname__", None):
+        ten += f"({_ten_ham(args[0])})"
+    _log_viec.info(
+        "Việc nặng %s · bắt đầu %s · chạy %d ms, chờ suất %d ms · việc nặng khác còn chạy %d/%d%s",
+        ten,
+        time.strftime("%H:%M:%S", time.localtime(time.time() - (xong - t_vao))),
+        round(tong_ms - cho_ms), round(cho_ms),
+        limiter.borrowed_tokens, MAX_HEAVY,
+        "" if t_chay is not None else " · huỷ trước khi được chạy",
+    )
 
 
 def heavy_stats() -> dict:

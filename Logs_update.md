@@ -5,15 +5,47 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 ---
 
 - 24/09/2026 Phòng Thanh toán - Chấm đối chiếu ACH (PR #136, xử lý review Khánh)
-    + ⚠️ **Mã quyền mới cần cấp tay sau deploy**: `cham_ach.huy_phien_khac` — cho phép huỷ được phiên
-      đối chiếu ACH của NGƯỜI KHÁC đang treo ở màn hình chờ xác nhận (trước đây nút "Dừng" chỉ huỷ
-      được phiên của chính mình; ai đó đóng trình duyệt bỏ dở là phiên đó chiếm máy chủ tới 4 giờ mà
-      không ai — kể cả admin thường — gỡ được). Cấp qua **Phân quyền theo nhóm**, gộp vào nhóm
-      `menu.cham_ach` cùng `cham_ach.process` — mặc định KHÔNG nhóm nào có, phải tick tay
     + ✅ Kết quả pHub gộp nhiều ngày ("Gộp kết quả pHub nhiều ngày", tab Báo cáo) không còn ảnh hưởng
       RAM/số lượt chạy đồng thời khác biệt so với mọi việc nặng khác của hệ thống — chỉ đổi cách chạy
       bên trong, không đổi cách dùng
     + ℹ️ Không có tính năng/màn hình mới nào khác — đợt này chỉ vá kỹ thuật theo review trước khi merge
+
+- 24/09/2026 Gom tập chứng từ - **Tải bìa cả nhóm nhanh hơn khoảng 2,5 lần**
+    + ✅ Bấm **Tải xuống** bìa của một nhóm tập: nhóm khoảng 30 tập trước mất 3–3,5 giây, nay còn khoảng
+      1,5 giây. Nguyên nhân: mỗi tập, chương trình đọc lại và chuẩn bị lại mẫu bìa từ đầu dù mẫu không đổi —
+      nay chỉ chuẩn bị một lần rồi dùng cho mọi tập
+    + ✅ Nút **Tải xuống** hiện vòng xoay trong lúc đang tạo bìa và không bấm lại được — trước đây mấy giây chờ
+      không có dấu hiệu gì nên dễ bấm hai lần
+    + ✅ Tên phòng / tên người có ký tự **`&`** hoặc **`<`** (vd "Phòng KSNB&HTVH") nay in đủ trên bìa — trước đây
+      bị cắt mất phần chữ phía sau mà không báo lỗi
+    + ℹ️ Màn *Nhật ký hệ thống* không còn báo **"Request chậm"** cho việc tải bìa dưới 8 giây — đây là việc tạo
+      file Word, cùng mức với xuất Excel/Word khác
+
+- 24/09/2026 Giám sát hệ thống - **Nền tối + biểu đồ nhìn lại 24 giờ**
+    + ✅ Màn hình chuyển sang **nền tối** cho đỡ chói mắt khi mở lâu
+    + ✅ **Ba biểu đồ 24 giờ qua** ngay đầu màn hình — để mở lên là biết *cả ngày hôm nay đã có lúc nào
+      suýt quá tải chưa*, không cần ngồi canh: **CPU và RAM máy chủ** (có vạch mốc 90 %), **mức dùng các
+      bể tài nguyên** (luồng, kết nối cơ sở dữ liệu, việc nặng — tính theo % sức chứa), và **độ phản hồi
+      của máy chủ** (lần đứng lâu nhất mỗi 10 phút, có vạch mốc 1 giây)
+    + ℹ️ Mỗi điểm trên biểu đồ là mức **cao nhất** trong 10 phút, không phải trung bình — lấy trung bình
+      thì một phút chạm 95 % sẽ bị san thành 45 % và không ai thấy
+    + ℹ️ Khoảng thời gian backend không chạy (tắt máy, cập nhật) để **đứt đoạn** trên biểu đồ, không nối
+      liền và không vẽ thành 0
+    + ✅ Biểu đồ **lỗi/cảnh báo theo từng giờ**, **đăng nhập đúng/sai theo từng giờ** (thấy được cụm đăng
+      nhập sai dồn vào một giờ — dấu hiệu dò mật khẩu), và **cột so dung lượng** các thư mục trên ổ
+    + ℹ️ CPU, bộ nhớ, các mức tải và độ trễ sao lưu **hiện tại** vẫn hiển thị bằng thanh mức: một con số
+      so với mức trần thì thanh mức đọc nhanh hơn biểu đồ
+    + ℹ️ Máy chủ ghi một dòng số đo mỗi phút vào cơ sở dữ liệu, tự xoá sau 7 ngày (khoảng 10.000 dòng,
+      vài trăm KB — không ảnh hưởng tốc độ)
+
+- 24/09/2026 Quản lý hệ thống - **Nhật ký cho biết lúc hệ thống chậm thì máy chủ đang bận việc gì** — không đổi gì với người dùng
+    + ✅ Dòng cảnh báo **"Request chậm"** nay kể **tên** các lượt đối chiếu đang chạy lúc đó
+      (vd `đối chiếu 1 (Song phương ĐI)`), trước chỉ có con số
+    + ✅ Các việc nặng — xuất Excel/Word, in đơn nghỉ phép, xuất báo cáo SWIFT… — chạy từ **1 giây** trở lên thì ghi
+      một dòng: việc gì, bắt đầu lúc mấy giờ, chạy bao lâu, **phải xếp hàng chờ** bao lâu
+    + ℹ️ Tra cứu: màn *Nhật ký hệ thống* → **Tất cả**, tìm `viec_nang`. Hoặc trên máy chủ mở **PowerShell** (không phải
+      cmd) trong thư mục chương trình: `Select-String -Path logs\app.log* -Pattern "viec_nang|slow.request"`
+    + ℹ️ Đổi ngưỡng 1 giây: thêm dòng `HEAVY_LOG_MS=<số mili giây>` vào `.env` rồi khởi động lại
 
 - 24/09/2026 Sổ trực cuối ngày - **Kiểm soát chéo GDV / KSV**
     + ✅ Người đứng tên GDV không còn tự chọn chính mình làm KSV xác nhận sổ trực của mình — hệ thống báo lỗi và không lưu

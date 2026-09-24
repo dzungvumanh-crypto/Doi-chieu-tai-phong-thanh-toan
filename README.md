@@ -319,6 +319,10 @@ backend vẫn sống. Mỗi lượt ghi vào `logs/app.log` một dòng "RAM đ�
 cắt bớt RAM của tiến trình nên số "RAM đỉnh" đo thấp đúng lúc quan trọng. Muốn quay về cách cũ: `DOI_CHIEU_TIEN_TRINH=0`
 trong `.env` rồi khởi động lại backend.
 
+Khi `logs/app.log` có dòng *"Request chậm"*, các dòng ngay trước nó cho biết máy chủ đang bận gì: dòng chậm kể
+tên các lượt đối chiếu đang chạy, còn việc nặng khác (xuất Word/Excel, in đơn, SWIFT…) chạy từ `HEAVY_LOG_MS`
+(mặc định 1000 ms) trở lên thì có dòng `viec_nang` riêng — kèm thời gian phải xếp hàng chờ suất `MAX_HEAVY_TASKS`.
+
 Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 48) thay vì mở tệp ở từng request.
 Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
 `logs/app.log`) — trước 17/09/2026 quá ~88 request cùng lúc là cả hệ thống đứng 30 giây.
@@ -354,6 +358,15 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
   file/WAL/sao lưu/nhật ký/file tạm, dung lượng ổ còn trống; sao lưu tự động gần nhất, lệch giờ NTP; người dùng 24 giờ
   (phiên, đăng nhập đúng/sai, tài khoản bị khoá, thao tác ghi); lượt đối chiếu đang chạy, Word nền; số lỗi/cảnh báo/
   request chậm trong `app.log` 24 giờ + 5 lỗi gần nhất. Chỉ đọc. Ngưỡng cảnh báo ở đầu `backend/api/monitor.py`
+  - **Nền tối** (chỉ trang này) — bảng màu chọn riêng cho nền tối; màu trạng thái luôn kèm biểu tượng + chữ
+  - **Ba biểu đồ nhìn lại 24 giờ** (`ui.echart`, đầu màn hình): CPU & RAM (vạch 90 %), mức dùng ba bể tài nguyên
+    theo % sức chứa, độ phản hồi backend (đứng lâu nhất mỗi ô, vạch 1000 ms). Nguồn: bảng `monitor_samples` —
+    `backend/services/giam_sat_mau.py` ghi 1 dòng/phút, giữ 7 ngày, tự dọn. Mỗi ô 10 phút lấy **MAX** (không phải
+    trung bình); ô không có mẫu trả `None` để đường **đứt** đúng quãng backend không chạy
+  - Biểu đồ khác: lỗi/cảnh báo theo giờ, đăng nhập thành công/thất bại theo giờ, cột ngang so dung lượng thư mục
+  - Số **hiện tại** (CPU, RAM, các bể, tuổi bản sao lưu) dùng **thanh mức**, không dựng biểu đồ — một tỷ lệ so với
+    trần thì thanh mức đọc nhanh hơn. Ô CPU lấy từ mẫu nền gần nhất (trung bình 1 phút), chỉ tự đo 0,3 s khi chưa
+    có mẫu. Xem card 161 trong `docs/Implementation-notes.html`
 - **Ảnh chữ ký cá nhân** (menu *Quản lý người dùng*, mọi vai trò kể cả chuyên viên): tải lên ảnh
   **PNG nền trong suốt**, tối đa 2 MB, mỗi người một ảnh. Ảnh lưu trong DB (bảng `user_signatures`)
   nên đi cùng bản sao lưu `.db`; chỉ xem/sửa/xoá được ảnh **của chính mình**. Dùng để ký đơn nghỉ phép
@@ -490,6 +503,9 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
     315 KB cho kho 1 năm; đo trên dữ liệu nhân theo năm, 5 năm là 513 ms / 5,1 MB và còn tăng
     tiếp) trong khi giao diện không đọc tới. Chi tiết tập lấy ở `GET /api/bundles/groups/{id}` —
     mọi đường in bìa / tải bìa đều đi qua đó, không đổi
+  - Tải bìa cả nhóm: phần chuẩn bị mẫu docxtpl (làm sạch XML + dịch Jinja) chỉ chạy **một lần**
+    rồi dùng lại cho mọi tập; nhóm 31 tập 2,0 s → 0,8 s (máy dev). Render bật **autoescape** —
+    tên có `&`/`<` (vd "KSNB&HTVH") không còn bị cắt. Nút "Tải xuống" hiện vòng xoay khi đang dựng
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa **ngày** và **số chứng từ** ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật. Sửa ngày chỉ ghi lại `cover_units` của tập, **không đụng** số liệu bàn giao gốc của phòng nguồn (`document_entries`); mỗi dòng phải còn ít nhất một ngày, xoá hết ngày thì báo lỗi và giữ nguyên số đang nhập
   - *Tab "In bìa hồ sơ"*: Nạp file Excel tra cứu hồ sơ (`LT_HS_TRACUU_*.xls`) xuất từ chương trình lưu trữ → điền vào mẫu bìa **M01/LHS** (`templates/Phòng KSNB&HTVH/Bàn giao cho lưu trữ/Bia_ho_so.docx`), giữ nguyên toàn bộ định dạng của mẫu. Lấy cột **I** *Mã vạch* (ký hiệu thông tin + chuỗi barcode), cột **C** *Tên hồ sơ* (dòng tiêu đề + **Ngày mở** = ngày **đầu tiên** xuất hiện trong tên), cột **F** *Ngày CVKT*, cột **G** *Số tờ*. Chọn hồ sơ cần in trên bảng rồi tải về **1 file Word nhiều trang** (mỗi hồ sơ 1 trang) hoặc **ZIP mỗi hồ sơ 1 file**. Máy in phải cài font **"3 of 9 Barcode"**, nếu không dòng mã vạch in ra thành chữ thường và máy quét không đọc được
 - **Báo cáo** (menu con):
