@@ -178,8 +178,10 @@ def _vong_lap() -> None:
                         _dong(db)
                         db = None
                         if lan == 2:
-                            _log.warning("Không ghi được %d dòng audit (vd %s %s) — bỏ lô này",
-                                         len(lo), lo[0][0], lo[0][1], exc_info=True)
+                            # ERROR, không WARNING: mất tới 200 dòng nhật ký kiểm soát của nhiều
+                            # người cùng lúc — phải hiện ở mục "lỗi" của màn Giám sát / Nhật ký.
+                            _log.error("Không ghi được %d dòng audit (vd %s %s) — bỏ lô này",
+                                       len(lo), lo[0][0], lo[0][1], exc_info=True)
             finally:
                 for _ in lay_ra:
                     _q.task_done()

@@ -107,7 +107,9 @@
 
       <div class="label"><span class="pill pill-blue">Quyết định</span> P3 — lô lỗi thử lại NGUYÊN LÔ một lần, không thử từng dòng</div>
       <p>Lỗi thường gặp là khoá CSDL quá 10 s. Thử từng dòng thì 200 dòng × 10 s = luồng ghi đứng nửa tiếng trong khi hàng đợi
-        đầy dần. Lỗi lần 2 → bỏ cả lô, 1 dòng WARNING (trước đây: bỏ 1 dòng, 1 WARNING mỗi dòng). Không chờ gom cho đủ lô —
+        đầy dần. Lỗi lần 2 → bỏ cả lô, 1 dòng <b>ERROR</b> (trước đây: bỏ 1 dòng, 1 WARNING mỗi dòng).
+        Nâng lên ERROR theo phản biện: lỗi không tạm thời (đĩa đầy) là mất tới 200 dòng nhật ký kiểm soát của nhiều người
+        cùng lúc — ERROR mới được đếm vào mục "lỗi" ở màn Giám sát và tab Tổng quan của Nhật ký hệ thống. Không chờ gom cho đủ lô —
         chỉ vét những dòng ĐANG chờ sẵn, nên độ trễ ghi không đổi. <code>NORMAL</code> ở chế độ WAL không làm hỏng CSDL khi
         mất điện, chỉ có thể mất giao dịch cuối chưa checkpoint — cùng mức với bể kết nối.</p>
 
