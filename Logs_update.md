@@ -12,6 +12,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + ⚠️ Khi chưa chọn ngày, 5 ô tổng quan (nhất là ô **Hoàn thành**) nay đếm từ đầu năm trước, không còn cộng dồn mọi năm —
       con số sẽ nhỏ hơn trước, không phải mất dữ liệu
     + ✅ Lưu nhật ký thao tác và tra cứu dữ liệu nhẹ hơn cho máy chủ
+
 - 23/09/2026 Nhiều màn hình - **Sửa lỗi sau đợt rà soát toàn hệ thống**
     + ✅ **Nghỉ phép**: duyệt / từ chối / huỷ đơn xong thì ở lại đúng tab đang đứng. Trước đây, vào thẳng tab
       "Chờ duyệt" từ thanh bên rồi duyệt ngay thì bị đưa về Dashboard
