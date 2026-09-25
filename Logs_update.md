@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/09/2026 Giám sát hệ thống - **Biểu đồ hiện nguyên hình, không còn vẽ chạy từ trái sang phải**
+    + ✅ Mỗi lần làm mới, biểu đồ **hiện ra cùng lúc**; cả khối **nháy nhẹ 0,1 giây** để báo số liệu vừa được cập nhật
+    + ✅ Biểu đồ *Độ phản hồi của backend* có lại **cột số bên trái**, ghi theo lối viết số Việt Nam (1.200 ms)
+    + ✅ Bỏ hai đường kẻ đỏ *"ngưỡng 90 %"* và *"gần đầy"* trên hai biểu đồ phần trăm. Đường mốc **1000 ms** ở biểu đồ
+      độ phản hồi vẫn giữ, vì biểu đồ đó không có thang cố định để tự so
+    + ℹ️ Rê chuột lên biểu đồ vẫn xem được số của từng mốc; quãng máy chủ không chạy hiện dấu **—**
+
 - 25/09/2026 Chấm ILO1000 - **Khớp đúng hơn qua kỳ nghỉ dài và sau giờ cutoff Citad; ghi rõ dòng nào chưa đối chiếu được**
     + ✅ Kỳ nghỉ lễ dài (vd nghỉ Quốc khánh, Tết): chương trình tự gộp dữ liệu của các ngày nghỉ theo **lịch ngày lễ
       và ngày làm bù đã khai trong hệ thống**, không chỉ cuối tuần như trước. ⚠️ Ngày lễ, ngày làm bù chưa khai trên

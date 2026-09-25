@@ -380,3 +380,29 @@ def test_o_thoi_gian_nam_dung_luoi_10_phut_du_mo_trang_luc_nao(tmp_path, monkeyp
         assert all(int(o["luc"][3:]) % 10 == 0 for o in ls), f"phút {phut}: ô lệch lưới"
         assert sum(1 for o in ls if o["luc"].endswith(":00")) == 24, f"phút {phut}: thiếu mốc giờ tròn"
     db.close()
+
+
+# ── Giao diện biểu đồ (canh hồi quy, không cần trình duyệt) ──
+def test_bieu_do_khong_co_hoat_anh_va_nhan_truc_dung_loi_viet_so_VN():
+    """Hai thứ người dùng đã phải nhắc — đừng để ai vô tình bật lại.
+
+    1. Hoạt ảnh ECharts vẽ đường chạy từ trái sang phải mỗi lượt làm mới 30 giây.
+    2. Nhãn trục mặc định ra "1,200 ms" — tiếng Việt đọc phẩy là dấu thập phân → 1,2 ms.
+    """
+    from frontend.pages import monitor as m
+
+    assert m._khung_do(100)["animation"] is False
+
+    nhan = m._truc_so(" ms")["axisLabel"]
+    assert "formatter" not in nhan, "khuôn {value} của ECharts tự chèn dấu phẩy hàng nghìn"
+    assert nhan[":formatter"].startswith("v => v.toLocaleString('vi-VN')")
+
+
+def test_hai_bieu_do_phan_tram_khong_con_vach_nguong():
+    """Người dùng chốt 25/09: bỏ vạch "ngưỡng 90 %" và "gần đầy"."""
+    from pathlib import Path
+
+    ma = Path(__file__).resolve().parent.parent / "frontend" / "pages" / "monitor.py"
+    noi_dung = ma.read_text(encoding="utf-8")
+    assert "ngưỡng 90" not in noi_dung and "gần đầy" not in noi_dung
+    assert "ngưỡng 1000 ms" in noi_dung, "vạch mốc của biểu đồ mili giây vẫn giữ"
