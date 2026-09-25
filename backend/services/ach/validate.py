@@ -60,12 +60,17 @@ def validate_required_files(filenames: list[str]) -> dict:
                   else 'Thiếu file *_DEN_*.zip (cần 2)',
     })
 
-    # tang0_ok — 2026-08-21 (chi_tim_timeout, xem project_ach_gl02_optional_tiered_deps):
-    # PDF + GW + MIS_DI×2 là mức tối thiểu thật sự để tính "Timeout không đi kênh"
-    # (không cần GL02/MIS_DEN). Tách riêng khỏi `ok` tổng (giữ nguyên, không phá
-    # API contract hiện có) để frontend biết có nên ĐỀ NGHỊ chế độ chạy thiếu
-    # GL02/MIS_đến hay không — không đề nghị nếu thiếu cả mức tối thiểu này.
-    _nhan_tang0 = {'File PDF (session)', 'GW (.xlsx)', 'MIS_DI (cần 2 file .zip)'}
+    # tang0_ok — sàn bắt buộc TUYỆT ĐỐI cuối cùng cho TOÀN BỘ lượt chạy (D1,
+    # 23/09/2026 — trước đây gồm cả GW, nay chỉ còn PDF). GW đi không còn là sàn
+    # bắt buộc CHUNG: `_tim_gw_xlsx()` trả None khi thiếu thay vì raise, Tab 2
+    # "Đối chiếu đến" chạy được không cần GW đi — sàn bắt buộc của TỪNG TAB do
+    # frontend tự kiểm theo tab (Tab 1 vẫn cần GW đi, Tab 2 thì không). Thiếu
+    # GL02/MIS_DI/MIS_DEN/GW (bất kỳ tổ hợp nào) không còn chặn chạy —
+    # `main_from_dir()` tự chạy giản lược, báo rõ phần nào "CHƯA ĐỐI CHIẾU ĐƯỢC"
+    # thay vì chặn cứng. Tách riêng khỏi `ok` tổng (giữ nguyên, không phá API
+    # contract hiện có) để frontend biết có cho chạy hay chặn hẳn (thiếu PDF thì
+    # không có gì để chạy).
+    _nhan_tang0 = {'File PDF (session)'}
     tang0_ok = all(c['ok'] for c in checks if c['label'] in _nhan_tang0)
 
     return {'ok': all(c['ok'] for c in checks), 'tang0_ok': tang0_ok, 'checks': checks}

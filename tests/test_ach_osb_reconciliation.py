@@ -8,7 +8,9 @@ import pytest
 import xlsxwriter
 import openpyxl
 
-from backend.services.ach.b9_doi_chieu_osb import xu_ly_qt, doi_chieu_osb_di, doi_chieu_osb_den
+from backend.services.ach.b9_doi_chieu_osb import (
+    xu_ly_qt, doi_chieu_osb_di, doi_chieu_osb_den, tach_dien_huy_qt,
+)
 from backend.services.ach.pipeline import xuat_excel_osb, xuat_excel
 
 
@@ -344,3 +346,134 @@ class TestGhiChuOsbTrenBaoCaoChinh:
         col_den = header_den.index('LOAI_LENH_OSB')
         n_osb_den = sum(1 for row in ws_den.iter_rows(min_row=2) if row[col_den].value == '1')
         assert n_osb_den == 1
+
+    def test_mis_di_den_tong_cong_ca_osb_da_khop_qt(self, tmp_path):
+        """Việc 1 (2026-09-15, Thảo xác nhận): Mục 2 loại OSB đã khớp QT ra khỏi
+        MIS_đi/đến thừa vì bản chất vẫn là MIS đã khớp — loại ra chỉ để MIS thừa
+        còn lại là gd CHƯA hạch toán NPO/QT, KHÔNG được làm giảm tổng "Mis đi/đến
+        ngày" trên TONG_KET. Tổng phải CỘNG LẠI đúng phần OSB đã loại đó."""
+        df_mis_di_khop  = pd.DataFrame({'CHI_NHANH': ['0001', '0002'], 'SO_TIEN': [100, 200]})
+        df_mis_di_thua  = pd.DataFrame({'SO_TIEN': [300]})          # đã loại OSB khớp QT (Mục 2)
+        df_timeout      = pd.DataFrame({'SO_TIEN': [50]})
+        df_osb_di_khop  = pd.DataFrame({'KEY_HUB': ['k1', 'k2'], 'SO_TIEN': [10, 20]})
+        df_mis_den_khop = pd.DataFrame({'SO_TIEN': [1000]})
+        df_mis_den_thua = pd.DataFrame({'SO_TIEN': [400]})
+        df_osb_den_khop = pd.DataFrame({'KEY_HUB': ['k3'], 'SO_TIEN': [5]})
+
+        output_path = str(tmp_path / 'doi_chieu_20260727.xlsx')
+        xuat_excel(
+            output_path, '16422',
+            df_mis_di_khop, pd.DataFrame({'CRAMOUNT': [1]}), df_mis_di_thua,
+            df_timeout,
+            df_mis_den_khop, pd.DataFrame({'DRAMOUNT': [1]}), df_mis_den_thua,
+            pd.DataFrame({'BRCD': ['0001'], 'STTLMAMT': [1], 'MSGREF': ['R'], 'SessionId': ['1'],
+                          'PrcFlg': ['x'], 'KEY_GW': ['k']}),
+            df_osb_di_khop=df_osb_di_khop, df_osb_den_khop=df_osb_den_khop,
+        )
+        wb = openpyxl.load_workbook(output_path)
+        ws = wb['TONG_KET']
+        # Layout song song 2 khối: cột A-C = chiều đi, cột E-G = chiều đến (D trống).
+        rows_di  = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
+        rows_den = {row[4].value: row[5].value for row in ws.iter_rows(min_row=2) if row[4].value}
+
+        # n_mis_di_tong = n_mis_di_khop(2) + n_mis_di_thua(1) + n_timeout(1) + n_osb_di_khop(2) = 6
+        assert rows_di['Mis đi ngày 27/07/2026'] == 6
+        # n_mis_den_tong = n_mis_den_khop(1) + n_mis_den_thua(1) + n_osb_den_khop(1) = 3
+        assert rows_den['Mis đến ngày 27/07/2026'] == 3
+
+
+# ── Mục 2 (bổ sung 11.09.2026) — loại OSB đã khớp QT khỏi MIS_đi/đến thừa ────
+
+class TestLoaiOsbDaKhopKhoiThua:
+    def test_giu_nguyen_index_goc_qua_doi_chieu_osb_di(self):
+        df_mis = pd.DataFrame([
+            _mis_di_thua_row('5612', '142088610', 200000),
+            _mis_di_thua_row('5406', '142088766', 14000000),
+        ], index=[10, 20])
+        df_qt = pd.DataFrame([_qt_row('5612142088610200000', 200000)])
+        khop, _ = doi_chieu_osb_di(df_mis, df_qt)
+        assert list(khop.index) == [10]
+
+    def test_loai_dung_dong_da_khop_khoi_mis_thua(self):
+        from backend.services.ach.pipeline import _loai_osb_da_khop_khoi_thua
+        df_mis_thua = pd.DataFrame([
+            _mis_di_thua_row('5612', '142088610', 200000),
+            _mis_di_thua_row('5406', '142088766', 14000000),
+        ])
+        df_qt = pd.DataFrame([_qt_row('5612142088610200000', 200000)])
+        khop, _ = doi_chieu_osb_di(df_mis_thua, df_qt)
+        con_lai = _loai_osb_da_khop_khoi_thua(df_mis_thua, khop)
+        assert len(con_lai) == 1
+        assert con_lai.iloc[0]['CHI_NHANH'] == '5406'
+
+    def test_cung_khoa_chi_loai_dung_so_luong_da_khop(self):
+        """2 dòng CÙNG KEY_HUB (trùng khoá) nhưng QT chỉ có 1 — chỉ 1 dòng được
+        coi là khớp, dòng còn lại vẫn phải ở lại MIS_đi thừa (không bị xoá theo
+        khoá)."""
+        from backend.services.ach.pipeline import _loai_osb_da_khop_khoi_thua
+        df_mis_thua = pd.DataFrame([
+            _mis_di_thua_row('5612', '142088610', 200000),
+            _mis_di_thua_row('5612', '142088610', 200000),
+        ])
+        df_qt = pd.DataFrame([_qt_row('5612142088610200000', 200000)])
+        khop, _ = doi_chieu_osb_di(df_mis_thua, df_qt)
+        assert len(khop) == 1
+        con_lai = _loai_osb_da_khop_khoi_thua(df_mis_thua, khop)
+        assert len(con_lai) == 1
+
+    def test_khong_co_osb_khop_thi_giu_nguyen(self):
+        from backend.services.ach.pipeline import _loai_osb_da_khop_khoi_thua
+        df_mis_thua = pd.DataFrame([_mis_di_thua_row('5612', '142088610', 200000)])
+        assert _loai_osb_da_khop_khoi_thua(df_mis_thua, None) is df_mis_thua
+        assert len(_loai_osb_da_khop_khoi_thua(df_mis_thua, pd.DataFrame())) == 1
+
+
+# ── Mục 5.1 (bổ sung 14.09.2026) — tách huỷ trong/khác ngày khỏi QT đi thừa ──
+
+def _qt_thua_row(cn_thuc_hien, ma_gd, kieu, so_tien):
+    return {'CN thực hiện': cn_thuc_hien, 'Mã giao dịch': ma_gd,
+            'Kiểu giao dịch': kieu, 'SO_TIEN': so_tien}
+
+
+class TestTachDienHuyQt:
+    def test_phan_dung_3_nhom(self):
+        """1 cặp huỷ trong ngày (cùng mã CN+trace, tổng=0) + 1 dòng Cancel riêng
+        lẻ (huỷ khác ngày) + 1 dòng bình thường còn lại (QT đi thừa thật)."""
+        df = pd.DataFrame([
+            _qt_thua_row('5612 - CN A', '142088610', 'Normal', 200000),
+            _qt_thua_row('5612 - CN A', '142088610', 'Cancel', -200000),
+            _qt_thua_row('6360 - CN B', '092036658', 'Cancel', -500000),
+            _qt_thua_row('7000 - CN C', '000111222', 'Normal', 300000),
+        ])
+        huy_trong, huy_khac, con_lai = tach_dien_huy_qt(df)
+        assert len(huy_trong) == 2
+        assert len(huy_khac) == 1
+        assert len(con_lai) == 1
+        assert huy_khac.iloc[0]['SO_TIEN'] == -500000
+        assert con_lai.iloc[0]['SO_TIEN'] == 300000
+
+    def test_nhom_tong_khac_0_khong_bi_coi_la_huy_trong_ngay(self):
+        """Cùng mã CN+trace nhưng tổng != 0 — không phải huỷ trong ngày; nếu 1
+        trong 2 dòng là Cancel thì dòng đó vẫn rơi vào huỷ khác ngày."""
+        df = pd.DataFrame([
+            _qt_thua_row('5612 - CN A', '142088610', 'Normal', 200000),
+            _qt_thua_row('5612 - CN A', '142088610', 'Cancel', -100000),
+        ])
+        huy_trong, huy_khac, con_lai = tach_dien_huy_qt(df)
+        assert len(huy_trong) == 0
+        assert len(huy_khac) == 1
+        assert len(con_lai) == 1
+
+    def test_cn_thuc_hien_sai_dinh_dang_bao_loi(self):
+        df = pd.DataFrame([_qt_thua_row('CN không có mã số', '142088610', 'Normal', 200000)])
+        with pytest.raises(ValueError, match='CN thực hiện'):
+            tach_dien_huy_qt(df)
+
+    def test_df_rong_tra_ve_nguyen_ban(self):
+        df = pd.DataFrame(columns=['CN thực hiện', 'Mã giao dịch', 'Kiểu giao dịch', 'SO_TIEN'])
+        a, b, c = tach_dien_huy_qt(df)
+        assert a is df and b is df and c is df
+
+    def test_none_tra_ve_nguyen_ban(self):
+        a, b, c = tach_dien_huy_qt(None)
+        assert a is None and b is None and c is None

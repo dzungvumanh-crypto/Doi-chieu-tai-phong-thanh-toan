@@ -275,7 +275,10 @@ FEATURE_GROUPS: list[dict] = [
                             "doi_chieu_song_phuong_kenh_core_di.process",
                         ],
                     },
-                    {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
+                    {
+                        "code": "menu.cham_ach",
+                        "actions": ["cham_ach.process"],
+                    },
                     {"code": "menu.cham_ilo1000", "actions": []},
                     {
                         "code": "menu.doi_chieu_citad",

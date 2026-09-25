@@ -1,4 +1,18 @@
-"""Trang Chấm đối chiếu ACH — chọn file từ máy người dùng, chạy pipeline, download kết quả."""
+"""Trang Chấm đối chiếu ACH — chọn file từ máy người dùng, chạy pipeline, download kết quả.
+
+D (23/09/2026) — tách 3 tab chạy ĐỘC LẬP thay cho 1 luồng chạy duy nhất:
+- Tab "Timeout + Đối chiếu đi" — GỘP CHUNG cố ý (D0): cả hai đi qua đúng một
+  bước khớp_voi_gw() ở backend, tách ra là phải tính lại từ đầu.
+- Tab "Đối chiếu đến" — độc lập thật, không cần GW đi (D1 backend đã gỡ khỏi
+  sàn bắt buộc chung).
+- Tab "Báo cáo" — nơi liệt kê file kết quả THẬT SỰ được xuất (_BAO_CAO_REGISTRY)
+  và (sau này, Luồng C) khối "Gộp kết quả pHub nhiều ngày".
+
+D-3 (đã chốt): chỉ 1 lượt/lần cho CẢ TRANG — khi 1 tab đang chạy, khoá nút Chạy
+của cả 2 tab còn lại (Báo cáo chưa có nút Chạy ở đợt này). Dùng CHUNG 1 bộ state
+chạy (`run_state`) + progress/log/checkpoint — tách trạng thái FILE theo tab,
+không tách logic poll/cancel/show kết quả (tránh lệch pha giữa các tab).
+"""
 
 import re
 import asyncio
@@ -30,12 +44,32 @@ _MAX_POLL_FAILS = 10
 # _MAX_POLL_FAILS phải chịu tới 5 phút. Chờ ngắn hơn là báo "chưa dừng được" oan.
 _HAN_CHO_DUNG  = 300   # giây — tối đa chờ phiên cũ thật sự kết thúc
 _NHIP_CHO_DUNG = 2.0   # giây — nhịp hỏi lại
-_FILE_HINT = (
-    'PDF (session) · GL02*.zip · GW*.xlsx · '
-    '2× *_DI_*.zip · 2× *_DEN_*.zip · '
-    '(tùy chọn, Điểm 4) MIS_DI_THUA*.csv / MIS_DEN_THUA*.csv của lần chạy ngày T-2 · '
-    '(tùy chọn, Điểm 2) QT*.xlsx (Quyết toán OSB đi/đến)'
+
+# 2 tab CÓ nút Chạy (D-3 khoá lẫn nhau) — "baocao" chưa có nút Chạy ở đợt này,
+# nút "Gộp" của Luồng C (sau này) CỐ Ý không dùng chung khoá này (C-K).
+_TAB_LABELS = {
+    'di':  'Timeout + Đối chiếu đi',
+    'den': 'Đối chiếu đến',
+}
+
+_FILE_HINT_DI = (
+    'PDF (session) · GW*.xlsx (đủ để tính Timeout) · 2× *_DI_*.zip · '
+    'GL02*.zip (để đối chiếu Chiều đi với NPO) · '
+    '(tùy chọn) MIS_DI_THUA*.csv / NPO_đi thừa T-2 / QT*.xlsx (Quyết toán OSB đi) / '
+    'TIMEOUT_KHONG_KENH_*.csv ("TO ko đi kênh ngày cũ", Mục 8) / báo cáo Napas PDF hoặc CSV ISS'
 )
+_FILE_HINT_DEN = (
+    'PDF (session) · GL02*.zip · 2× *_DEN_*.zip · '
+    '(tùy chọn) MIS_DEN_THUA*.csv (T-2) / QT*.xlsx (Quyết toán OSB đến) / '
+    'GW đến*.xlsx (Mục 4) / báo cáo Napas PDF hoặc CSV BEN'
+)
+
+# Nhãn hiển thị ở validate_card — chỉ hiện các mục LIÊN QUAN tới tab đang xem.
+# Tab 1 gồm cả GL02 (Chiều đi cần NPO) dù D2 chỉ nói tắt "PDF + GW đi (+MIS_đi
+# để ra số)" — quyết định tự chọn: không hiện GL02 sẽ khiến người dùng không
+# hiểu vì sao nhóm "Chiều đi" báo CHƯA ĐỐI CHIẾU ĐƯỢC dù đã đủ GW+MIS_đi.
+_CHECKS_TAB_DI  = {'File PDF (session)', 'GW (.xlsx)', 'MIS_DI (cần 2 file .zip)', 'GL02 (.zip)'}
+_CHECKS_TAB_DEN = {'File PDF (session)', 'GL02 (.zip)', 'MIS_DEN (cần 2 file .zip)'}
 
 # Mốc log → % tiến trình (tăng dần, không lùi lại)
 _PROGRESS_MARKERS = [
@@ -76,17 +110,93 @@ _STAGE_LABELS = [
 # "Kết quả tạm thời" — nhóm nghiệp vụ ACH thật (khớp đúng dict summary_callback
 # ở backend/services/ach/pipeline.py::xuat_excel), không dùng nhãn đối chiếu
 # ngân hàng chung chung. (n_key, s_key, nhãn, icon, class khung, class chữ)
-_SUMMARY_CARDS = [
-    ('khop_npo_di',    'tien_khop_npo_di',    'Khớp NPO — đi',        'call_made',     'bg-green-50 border-green-200', 'text-green-700'),
-    ('khop_npo_den',   'tien_khop_npo_den',   'Khớp NPO — đến',       'call_received', 'bg-green-50 border-green-200', 'text-green-700'),
-    ('khop_osb_di',    'tien_khop_osb_di',    'Khớp OSB — đi',        'call_made',     'bg-blue-50 border-blue-200',   'text-blue-700'),
-    ('khop_osb_den',   'tien_khop_osb_den',   'Khớp OSB — đến',       'call_received', 'bg-blue-50 border-blue-200',   'text-blue-700'),
-    ('timeout',        'tien_timeout',        'Timeout không đi kênh', 'schedule',     'bg-orange-50 border-orange-200', 'text-orange-700'),
-    ('huy_trong_ngay', 'tien_huy_trong_ngay', 'Huỷ trong ngày',       'block',         'bg-gray-50 border-gray-200',   'text-gray-700'),
-    ('huy_khac_ngay',  'tien_huy_khac_ngay',  'Huỷ khác ngày',        'block',         'bg-gray-50 border-gray-200',   'text-gray-700'),
-    ('thua_di',        'tien_thua_di',        'Thừa chưa khớp — đi',   'warning',      'bg-red-50 border-red-200',     'text-red-700'),
-    ('thua_den',       'tien_thua_den',       'Thừa chưa khớp — đến',  'warning',      'bg-red-50 border-red-200',     'text-red-700'),
+# D-4 (23/09/2026, đã chốt) — BỎ lớp tab con trong card "Kết quả tạm thời": mỗi
+# tab lớn (Tab 1/Tab 2) chỉ hiện đúng bộ thẻ của mình, không còn 3 sub-tab
+# Đi/Đến/Timeout lồng bên trong 1 tab lớn.
+_SUMMARY_CARDS_DI = [
+    ('khop_npo_di',    'tien_khop_npo_di',    'Khớp NPO — đi',  'call_made', 'bg-green-50 border-green-200', 'text-green-700'),
+    ('khop_osb_di',    'tien_khop_osb_di',    'Khớp OSB — đi',  'call_made', 'bg-blue-50 border-blue-200',   'text-blue-700'),
+    ('huy_trong_ngay', 'tien_huy_trong_ngay', 'Huỷ trong ngày', 'block',     'bg-gray-50 border-gray-200',   'text-gray-700'),
+    ('huy_khac_ngay',  'tien_huy_khac_ngay',  'Huỷ khác ngày',  'block',     'bg-gray-50 border-gray-200',   'text-gray-700'),
+    ('thua_di',        'tien_thua_di',        'Thừa chưa khớp — đi', 'warning', 'bg-red-50 border-red-200', 'text-red-700'),
 ]
+_SUMMARY_CARDS_DEN = [
+    ('khop_npo_den',   'tien_khop_npo_den',   'Khớp NPO — đến', 'call_received', 'bg-green-50 border-green-200', 'text-green-700'),
+    ('khop_osb_den',   'tien_khop_osb_den',   'Khớp OSB — đến', 'call_received', 'bg-blue-50 border-blue-200',   'text-blue-700'),
+    ('thua_den',       'tien_thua_den',       'Thừa chưa khớp — đến', 'warning', 'bg-red-50 border-red-200',    'text-red-700'),
+]
+_SUMMARY_CARDS_TIMEOUT = [
+    ('timeout', 'tien_timeout', 'Timeout không đi kênh', 'schedule', 'bg-orange-50 border-orange-200', 'text-orange-700'),
+]
+
+# ─── D3 — Tab Báo cáo: registry các file THẬT SỰ được xuất ───────────────────
+# Đọc trực tiếp `xuat_excel()` + khối xuất file cuối `main_from_dir()`
+# (backend/services/ach/pipeline.py) để liệt kê — KHÔNG chép registry bản cũ
+# (từng có mục `_ACH_PHUBLOI.xlsx` trỏ file không còn được xuất từ 18/09/2026).
+# (regex tên file, tên nghiệp vụ, mô tả)
+_BAO_CAO_REGISTRY: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r'^doi_chieu_\d{8}\.xlsx$'),
+     'Báo cáo tổng hợp',
+     'File chính — các sheet Chiều đi/Chiều đến/Timeout của lượt chạy này.'),
+    (re.compile(r'^TIMEOUT_KHONG_KENH_\d{8}\.csv$'),
+     'Timeout không đi kênh (mang sang ngày sau)',
+     'Input "TO ko đi kênh ngày cũ" (Mục 8) cho lượt chạy kế tiếp — cũng là '
+     'nguyên liệu cho màn Gộp kết quả pHub (Luồng C).'),
+    (re.compile(r'^GW_CHO_PHUB_\d{8}\.csv$'),
+     'GW-cho-pHub (A4, chỉ xuất khi tick)',
+     'Chỉ xuất khi tick "Tạo file GW-cho-pHub" ở Tab 1 — nguyên liệu cho màn '
+     'Gộp kết quả pHub (Luồng C). Máy chủ không giữ bản sao, tải về ngay.'),
+    (re.compile(r'^NPO_DI_THUA_\d{8}\.csv$'),
+     'NPO_đi thừa (mang sang ngày sau)',
+     'Input đối chiếu chéo ngày (Mục 5) cho lượt chạy kế tiếp.'),
+    (re.compile(r'^QT_DI_THUA_\d{8}\.csv$'),
+     'QT đi thừa (mang sang ngày sau)',
+     'Input đối chiếu chéo ngày (Mục 5.1) cho lượt chạy kế tiếp.'),
+    (re.compile(r'^\d{8}_ACH_OSB\.xlsx$'),
+     'Đối chiếu OSB / Quyết toán (Điểm 2)',
+     'Chỉ xuất khi có file QT*.xlsx (Quyết toán OSB đi và/hoặc đến).'),
+    (re.compile(r'^\d{8}_ACH_GWDEN\.xlsx$'),
+     'Đối chiếu GW đến (Mục 4)',
+     'Chỉ xuất khi có file GW đến (tuỳ chọn) và MIS_đến.'),
+    (re.compile(r'^\d{8}_ACH_Napas\.xlsx$'),
+     'Đối chiếu Napas BC.03 (Mục 6/7)',
+     'Chỉ xuất khi có báo cáo Napas PDF hoặc CSV chi tiết ISS/BEN.'),
+    (re.compile(r'^\d{8}_ACH_MISThuaT2\.xlsx$'),
+     'Đối chiếu chéo ngày MIS thừa T-2 (Điểm 4)',
+     'Chỉ xuất khi có file MIS_DI_THUA*/MIS_DEN_THUA*.csv của ngày trước.'),
+    (re.compile(r'^\d{8}_ACH_HuyCheoNgay\.xlsx$'),
+     'Đối chiếu chéo ngày huỷ khác ngày (Mục 5/5.1)',
+     'So NPO_đi thừa T-2 / QT đi thừa T-2 với huỷ khác ngày của ngày đang chạy.'),
+    (re.compile(r'^\d{8}_ACH_TimeoutCu\.xlsx$'),
+     'Đối chiếu Timeout ngày cũ (Mục 8)',
+     'Chỉ xuất khi có đính kèm file "TO ko đi kênh ngày cũ".'),
+]
+
+
+def _phan_loai_bao_cao(files: list[str]) -> list[tuple[str, str, list[str]]]:
+    """[(tên_nghiệp_vụ, mô_tả, [file...])] theo `_BAO_CAO_REGISTRY`. File KHÔNG
+    khớp mục nào rơi vào nhóm "Khác" — không được để file biến mất khỏi màn hình
+    chỉ vì registry thiếu (đúng tinh thần dự án: thiếu sót phải LỘ RA)."""
+    nhom: dict[str, list[str]] = {}
+    mo_ta: dict[str, str] = {}
+    khac: list[str] = []
+    for f in sorted(files):
+        for pattern, ten, mota in _BAO_CAO_REGISTRY:
+            if pattern.match(f):
+                nhom.setdefault(ten, []).append(f)
+                mo_ta[ten] = mota
+                break
+        else:
+            khac.append(f)
+    ket_qua = [(ten, mo_ta[ten], fs) for ten, fs in nhom.items()]
+    if khac:
+        ket_qua.append((
+            'Khác (chưa có trong danh mục)',
+            'File này chưa khớp mục nào ở trên — vẫn tải được bình thường, '
+            'báo người phát triển bổ sung vào _BAO_CAO_REGISTRY.',
+            khac,
+        ))
+    return ket_qua
 
 
 @ui.page('/cham_ach')
@@ -101,188 +211,475 @@ async def cham_ach_page():
     # tiến độ và tải kết quả được, nhưng không khởi động/tiếp tục được lần chạy.
     co_quyen_chay = api.has_feature('cham_ach.process')
 
-    # ── State ─────────────────────────────────────────────────────────────────
-    state = {
-        'files':       {},     # {filename: bytes}
+    # ── State CHUNG cho cả trang (chạy/poll/checkpoint) ─────────────────────
+    # D-3: 1 lượt/lần cho CẢ TRANG — không phải 1 lượt/tab. `active_tab` cho
+    # biết tab nào đang giữ job hiện tại, dùng để khoá 2 nút Chạy còn lại.
+    run_state = {
         'job_id':      None,
-        'log_pos':     0,      # số log đã hiển thị
+        'log_pos':     0,
         'timer':       None,
         'running':     False,
+        # job_open — CÓ job đang chiếm slot (đang chạy HOẶC đang chờ xác nhận
+        # Checkpoint) — khác `running` (chỉ True lúc pipeline thật sự đang
+        # chạy). Khoá 2 nút Chạy (D-3) phải dựa vào job_open: lúc Checkpoint
+        # tạm dừng, `running` = False nhưng job vẫn CHIẾM SLOT trên máy chủ —
+        # khoá theo `running` sẽ mở khoá nhầm, cho bấm Chạy tab kia trong khi
+        # tab này còn đang chờ xác nhận (đặc biệt ở chế độ Checkpoint "deferred"
+        # — không có dialog modal nào chặn thao tác nền).
+        'job_open':    False,
+        'active_tab':  None,          # 'di' | 'den'
         'progress':    0.0,
-        'poll_fails':  0,      # số lần poll lỗi liên tiếp
-        'xac_nhan_upload': None,   # (filename, bytes) file xác nhận đã điền, chờ upload
-        'checkpoint_mode': 'inline',   # 'inline' | 'deferred' — cách xử lý khi tới Checkpoint
-        'pending_checkpoint_res': None,   # kết quả poll lúc tới Checkpoint (mode deferred, chờ mở)
-        'bo_qua_checkpoint': False,   # True = chạy thẳng, coi MIS_đi đúng 100%, không dừng chờ xác nhận
-        'max_total_mb': None,  # trần tổng dung lượng 1 lượt upload, do /api/ach/validate trả về
-        'dang_cho_dung': False,  # đang chờ phiên cũ dừng hẳn — để _poll() không báo trùng
-        'stage':       0,      # index trong _STAGE_LABELS — server tính, trang chỉ hiện
-        # 2026-08-21 (xem project_ach_gl02_optional_tiered_deps) — thiếu GL02/MIS_đến
-        # nhưng đủ PDF+GW+MIS_đi (Tầng 0) thì validate trả tang0_ok=True; người dùng
-        # phải tự tick chi_tim_timeout mới được chạy thiếu (không tự động hạ cấp).
-        'tang0_ok':        False,
-        'chi_tim_timeout': False,
+        'poll_fails':  0,
+        'stage':       0,
+        'dang_cho_dung': False,
+        'xac_nhan_upload': None,
+        'checkpoint_mode': 'inline',   # Tab 'di' — 'inline' | 'deferred'
+        'pending_checkpoint_res': None,
+        'bo_qua_checkpoint': False,    # Tab 'di' — chạy thẳng, bỏ qua Checkpoint
+        'tao_gw_cho_phub': False,      # Tab 'di' — ô tick A4, xuất GW_CHO_PHUB_*.csv, mặc định TẮT
+        'max_total_mb': None,
+        'mis_di_thieu': False,         # Tab 'di' — hint nút Chạy
+        'last_files': [],              # file kết quả job GẦN NHẤT — hiện ở tab Báo cáo
     }
+
+    # ── State FILE riêng từng tab (D2) ───────────────────────────────────────
+    state_di  = {'files': {}, 'tang0_ok': False}
+    state_den = {'files': {}, 'tang0_ok': False}
 
     with ui.row().classes('w-full'):
         await _sidebar('cham_ach')
         with _content_area():
             _page_header('Chấm đối chiếu ACH', 'Đối chiếu GL02 (NPO) với MIS — Phòng Thanh toán')
 
-            # ── Input card ────────────────────────────────────────────────────
-            with ui.card().classes('w-full p-5 mb-4'):
-                ui.label('Nguồn dữ liệu').classes('text-base font-semibold text-red-800 mb-3')
+            # ── Banner "đang chạy" CHUNG — hiện bất kể đang xem tab nào ──────
+            with ui.row().classes(
+                'w-full items-center gap-3 p-3 mb-4 rounded bg-blue-50 border border-blue-200'
+            ) as running_bar:
+                spinner = ui.spinner('dots', size='sm', color='blue')
+                running_label = ui.label('').classes('text-sm text-blue-800 flex-grow')
+                btn_cancel = ui.button('Dừng', icon='stop_circle', color='grey-6').props('dense')
+            running_bar.set_visibility(False)
 
-                upload_section = ui.column().classes('w-full mt-1 gap-1')
-                with upload_section:
-                    ui.label(
-                        'Mở thư mục chứa đủ file ACH của 1 phiên/1 ngày trên máy bạn, '
-                        'chọn tất cả file bằng Ctrl+A (hoặc giữ Shift để chọn khoảng) '
-                        'rồi kéo-thả hoặc bấm Mở.'
-                    ).classes('text-xs text-gray-500 mb-1')
-                    ui.label(_FILE_HINT).classes('text-xs text-gray-400 mb-1')
-                    file_list_label = ui.label('Chưa chọn file nào').classes(
-                        'text-xs text-gray-400 italic mb-2'
-                    )
+            # ── 3 tab cấp cao nhất (D2) ───────────────────────────────────────
+            with ui.tabs().props(
+                'active-color=red-800 indicator-color=red-800 align=left'
+            ).classes('w-full border-b border-gray-200 mb-4') as top_tabs:
+                tab_di     = ui.tab('di', label='Timeout + Đối chiếu đi')
+                tab_den    = ui.tab('den', label='Đối chiếu đến')
+                tab_baocao = ui.tab('baocao', label='Báo cáo')
 
-                    async def on_upload(e):
-                        data = e.content.read()
-                        state['files'][e.name] = data
-                        names = ', '.join(state['files'].keys())
-                        # Kèm tổng dung lượng: trần máy chủ tính theo MB, người dùng phải
-                        # thấy con số đó TRƯỚC khi bấm chạy mới biết mình đang vượt.
-                        file_list_label.set_text(
-                            f'Đã chọn ({len(state["files"])} file, {_tong_mb():.0f} MB): {names}')
-                        file_list_label.classes(
-                            remove='text-gray-400 italic', add='text-green-700 font-medium'
-                        )
-                        await _validate_now()
+            with ui.tab_panels(top_tabs, value=tab_di).classes('w-full'):
 
-                    async def on_clear():
-                        state['files'].clear()
-                        file_list_label.set_text('Chưa chọn file nào')
-                        file_list_label.classes(
-                            remove='text-green-700 font-medium', add='text-gray-400 italic'
-                        )
-                        await _validate_now()
+                # ══════════════════════════ TAB 1 ═══════════════════════════
+                with ui.tab_panel(tab_di):
+                    with ui.card().classes('w-full p-5 mb-4'):
+                        ui.label('Nguồn dữ liệu — Timeout + Đối chiếu đi').classes(
+                            'text-base font-semibold text-red-800 mb-3')
 
-                    ui.upload(
-                        on_upload=on_upload,
-                        auto_upload=True,
-                        multiple=True,
-                    ).props(
-                        'accept=".zip,.xlsx,.pdf,.csv" flat dense label="Chọn file (có thể chọn nhiều)..."'
-                    ).classes('w-full mb-1')
+                        file_list_label_di = ui.label('Chưa chọn file nào').classes(
+                            'text-xs text-gray-400 italic mb-2')
+                        ui.label(_FILE_HINT_DI).classes('text-xs text-gray-400 mb-1')
 
-                    ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
-                              on_click=on_clear).props('flat dense').classes('text-xs')
+                        async def on_upload_di(e):
+                            data = e.content.read()
+                            state_di['files'][e.name] = data
+                            names = ', '.join(state_di['files'].keys())
+                            file_list_label_di.set_text(
+                                f'Đã chọn ({len(state_di["files"])} file, '
+                                f'{_tong_mb(state_di):.0f} MB): {names}')
+                            file_list_label_di.classes(
+                                remove='text-gray-400 italic', add='text-green-700 font-medium')
+                            await _validate_now('di', state_di, validate_card_di, _CHECKS_TAB_DI)
 
-                # Ngày đối chiếu — gõ tay hoặc bấm icon lịch để chọn ngày
-                with ui.row().classes('items-center gap-3 mt-3'):
-                    ui.label('Ngày đối chiếu:').classes('text-sm text-gray-600')
-                    with ui.input(
-                        placeholder='dd/mm/yyyy  (bỏ trống = tự động từ PDF)',
-                    ).props('dense outlined clearable').classes('w-44') as ngay_input:
-                        with ui.menu().props('no-parent-event') as ngay_menu:
-                            ui.date(mask='DD/MM/YYYY').props(
-                                'first-day-of-week="1"'
-                            ).bind_value(ngay_input)
-                        with ngay_input.add_slot('append'):
-                            ui.icon('event').on('click', ngay_menu.open).classes(
-                                'cursor-pointer text-gray-500'
-                            )
-                    ui.label('Bỏ trống → tự động lấy từ tên file PDF').classes('text-xs text-gray-400')
+                        async def on_clear_di():
+                            state_di['files'].clear()
+                            file_list_label_di.set_text('Chưa chọn file nào')
+                            file_list_label_di.classes(
+                                remove='text-green-700 font-medium', add='text-gray-400 italic')
+                            await _validate_now('di', state_di, validate_card_di, _CHECKS_TAB_DI)
 
-                # ── Kết quả kiểm tra file ───────────────────────────────────
-                validate_card = ui.column().classes('w-full mt-3 gap-1 p-3 rounded bg-gray-50 border')
-                validate_card.set_visibility(False)
+                        ui.upload(
+                            on_upload=on_upload_di, auto_upload=True, multiple=True,
+                        ).props(
+                            'accept=".zip,.xlsx,.pdf,.csv" flat dense label="Chọn file (có thể chọn nhiều)..."'
+                        ).classes('w-full mb-1')
+                        ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
+                                  on_click=on_clear_di).props('flat dense').classes('text-xs')
 
-                # ── Chế độ xử lý Checkpoint ───────────────────────────────
-                checkpoint_section = ui.column().classes('w-full gap-1 mt-4')
-                with checkpoint_section:
-                    ui.label('Chế độ xử lý Checkpoint').classes('text-sm font-medium text-gray-700')
-                    checkpoint_mode_radio = ui.radio(
-                        {
-                            'inline':   'Xác nhận ngay khi MIS_đi vừa tạo xong (quy trình hiện tại)',
-                            'deferred': 'Chạy hết phần tự động, sau đó mới xác nhận MIS_đi rồi tiếp tục chạy',
-                        },
-                        value='inline',
-                    ).props('dense')
+                        with ui.row().classes('items-center gap-3 mt-3'):
+                            ui.label('Ngày đối chiếu:').classes('text-sm text-gray-600')
+                            ngay_input_di = _ngay_input()
+                            ui.label('Bỏ trống → tự động lấy từ tên file PDF').classes(
+                                'text-xs text-gray-400')
 
-                # ── Chạy thẳng, bỏ qua Checkpoint (2026-07-31) ─────────────
-                with ui.row().classes(
-                    'w-full items-start gap-2 mt-3 p-3 rounded bg-orange-50 border border-orange-200'
-                ):
-                    ui.icon('warning').classes('text-orange-700 mt-1')
-                    with ui.column().classes('gap-0'):
-                        bo_qua_checkbox = ui.checkbox(
-                            'Chạy thẳng — bỏ qua xác nhận thủ công MIS_đi'
-                        ).props('dense').classes('text-orange-900 font-medium')
+                        validate_card_di = ui.column().classes(
+                            'w-full mt-3 gap-1 p-3 rounded bg-gray-50 border')
+                        validate_card_di.set_visibility(False)
+
+                        # ── Chế độ xử lý Checkpoint (chỉ có ý nghĩa khi có MIS_đi) ──
+                        checkpoint_section = ui.column().classes('w-full gap-1 mt-4')
+                        with checkpoint_section:
+                            ui.label('Chế độ xử lý Checkpoint').classes(
+                                'text-sm font-medium text-gray-700')
+                            checkpoint_mode_radio = ui.radio(
+                                {
+                                    'inline':   'Xác nhận ngay khi MIS_đi vừa tạo xong (quy trình hiện tại)',
+                                    'deferred': 'Chạy hết phần tự động, sau đó mới xác nhận MIS_đi rồi tiếp tục chạy',
+                                },
+                                value='inline',
+                            ).props('dense')
+
+                        with ui.row().classes(
+                            'w-full items-start gap-2 mt-3 p-3 rounded bg-orange-50 border border-orange-200'
+                        ):
+                            ui.icon('warning').classes('text-orange-700 mt-1')
+                            with ui.column().classes('gap-0'):
+                                bo_qua_checkbox = ui.checkbox(
+                                    'Chạy thẳng — bỏ qua xác nhận thủ công MIS_đi'
+                                ).props('dense').classes('text-orange-900 font-medium')
+                                ui.label(
+                                    'Coi TOÀN BỘ MIS_đi là đúng 100% (không loại dòng nào, không bổ sung REFHUB), '
+                                    'chạy một mạch tới báo cáo cuối — KHÔNG dừng lại chờ xác nhận. Chỉ dùng khi '
+                                    'chắc chắn không nghi ngờ dữ liệu.'
+                                ).classes('text-xs text-orange-700')
+
+                        with ui.row().classes('gap-3 mt-4 items-center'):
+                            btn_run_di = ui.button('Chạy Timeout + Đối chiếu đi', icon='play_arrow',
+                                                    color='red-8').classes('font-semibold')
+                            if not co_quyen_chay:
+                                btn_run_di.props('disable')
+                                btn_run_di.tooltip('Bạn không có quyền thực hiện thao tác này')
+                            hint_chay_label = ui.label(
+                                'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
+                                'rồi mới chạy tiếp tới báo cáo cuối.'
+                            ).classes('text-xs text-gray-400')
+
+                        def _cap_nhat_hint_chay():
+                            if run_state['bo_qua_checkpoint']:
+                                hint_chay_label.set_text(
+                                    'Sẽ CHẠY THẲNG tới báo cáo cuối — KHÔNG dừng lại chờ xác nhận MIS_đi.')
+                                hint_chay_label.classes(
+                                    remove='text-gray-400', add='text-orange-700 font-semibold')
+                            elif run_state['mis_di_thieu']:
+                                # 2026-09-16 — thiếu MIS_đi thì không có gì để Checkpoint
+                                # xác nhận, pipeline tự động chạy thẳng dù chưa tick.
+                                hint_chay_label.set_text(
+                                    'Đang thiếu MIS_đi — không có gì để xác nhận, pipeline sẽ '
+                                    'CHẠY THẲNG tới báo cáo cuối dù không tick "chạy thẳng" ở trên.')
+                                hint_chay_label.classes(
+                                    remove='text-gray-400', add='text-orange-700 font-semibold')
+                            else:
+                                hint_chay_label.set_text(
+                                    'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
+                                    'rồi mới chạy tiếp tới báo cáo cuối.')
+                                hint_chay_label.classes(
+                                    remove='text-orange-700 font-semibold', add='text-gray-400')
+
+                        def _on_bo_qua_change(val: bool):
+                            run_state['bo_qua_checkpoint'] = val
+                            checkpoint_section.set_visibility(not val)
+                            _cap_nhat_hint_chay()
+
+                        bo_qua_checkbox.on_value_change(lambda e: _on_bo_qua_change(e.value))
+
+                        # ── Ô tick A4 (23.09.2026) — xuất GW-cho-pHub, mặc định TẮT ──
+                        # C1 đã chốt: server KHÔNG lưu gì (C-S) — quên tick nghĩa là
+                        # ngày hôm nay VĨNH VIỄN không có file để gộp pHub sau này. Nhãn
+                        # phải nói rõ hậu quả (rủi ro #6, PLAN.md), không viết chung
+                        # chung kiểu "Tạo file phụ".
+                        with ui.row().classes(
+                            'w-full items-start gap-2 mt-3 p-3 rounded bg-amber-50 border border-amber-200'
+                        ):
+                            ui.icon('info').classes('text-amber-700 mt-1')
+                            with ui.column().classes('gap-0'):
+                                gw_cho_phub_checkbox = ui.checkbox(
+                                    'Tạo file GW-cho-pHub (dùng cho màn Gộp pHub sau này)'
+                                ).props('dense').classes('text-amber-900 font-medium')
+                                ui.label(
+                                    'KHÔNG tick thì hôm nay KHÔNG có file GW-cho-pHub để gộp pHub sau này, '
+                                    'và KHÔNG lấy lại được (máy chủ không lưu bản sao — muốn có lại phải chạy '
+                                    'lại toàn bộ đối chiếu ngày này). Bật thêm khoảng 1 phút vào lượt chạy.'
+                                ).classes('text-xs text-amber-700')
+
+                        def _on_gw_cho_phub_change(val: bool):
+                            run_state['tao_gw_cho_phub'] = val
+
+                        gw_cho_phub_checkbox.on_value_change(lambda e: _on_gw_cho_phub_change(e.value))
+
+                        bo_qua_confirm_dialog = ui.dialog()
+                        with bo_qua_confirm_dialog, ui.card().classes('p-5').style('min-width: 420px'):
+                            ui.label('Xác nhận chạy thẳng, bỏ qua Checkpoint').classes(
+                                'text-base font-semibold text-orange-800 mb-2')
+                            ui.label(
+                                'Pipeline sẽ KHÔNG dừng lại để bạn xác nhận MIS_đi — toàn bộ được coi là đúng 100% '
+                                'và đi thẳng vào báo cáo cuối. Nếu sau này phát hiện sai sót, bạn cần chạy lại '
+                                '(bỏ tick) để đi qua Checkpoint như bình thường.'
+                            ).classes('text-sm text-gray-700 mb-4')
+                            with ui.row().classes('gap-2 justify-end w-full'):
+                                ui.button('Hủy', color='grey-6').props('flat').on(
+                                    'click', bo_qua_confirm_dialog.close)
+                                btn_xac_nhan_chay_thang = ui.button(
+                                    'Tôi hiểu, chạy thẳng luôn', icon='play_arrow', color='orange-8',
+                                ).classes('font-semibold')
+
+                    # "Kết quả tạm thời" Tab 1 — D-4: KHÔNG có sub-tab, hiện thẳng
+                    # 2 bộ thẻ (Chiều đi + Timeout) trong cùng 1 card.
+                    summary_card_di = ui.card().classes('w-full p-4 mb-4')
+                    summary_card_di.set_visibility(False)
+                    with summary_card_di:
+                        ui.label('Kết quả tạm thời — Chiều đi').classes(
+                            'text-base font-semibold text-red-800 mb-2')
+                        summary_body_di = ui.row().classes('w-full gap-3 flex-wrap mb-3')
+                        ui.label('Kết quả tạm thời — Timeout không đi kênh').classes(
+                            'text-base font-semibold text-red-800 mb-2')
+                        summary_body_timeout = ui.row().classes('w-full gap-3 flex-wrap')
+
+                # ══════════════════════════ TAB 2 ═══════════════════════════
+                with ui.tab_panel(tab_den):
+                    with ui.card().classes('w-full p-5 mb-4'):
+                        ui.label('Nguồn dữ liệu — Đối chiếu đến').classes(
+                            'text-base font-semibold text-red-800 mb-3')
+
+                        file_list_label_den = ui.label('Chưa chọn file nào').classes(
+                            'text-xs text-gray-400 italic mb-2')
+                        ui.label(_FILE_HINT_DEN).classes('text-xs text-gray-400 mb-1')
+
+                        async def on_upload_den(e):
+                            data = e.content.read()
+                            state_den['files'][e.name] = data
+                            names = ', '.join(state_den['files'].keys())
+                            file_list_label_den.set_text(
+                                f'Đã chọn ({len(state_den["files"])} file, '
+                                f'{_tong_mb(state_den):.0f} MB): {names}')
+                            file_list_label_den.classes(
+                                remove='text-gray-400 italic', add='text-green-700 font-medium')
+                            await _validate_now('den', state_den, validate_card_den, _CHECKS_TAB_DEN)
+
+                        async def on_clear_den():
+                            state_den['files'].clear()
+                            file_list_label_den.set_text('Chưa chọn file nào')
+                            file_list_label_den.classes(
+                                remove='text-green-700 font-medium', add='text-gray-400 italic')
+                            await _validate_now('den', state_den, validate_card_den, _CHECKS_TAB_DEN)
+
+                        ui.upload(
+                            on_upload=on_upload_den, auto_upload=True, multiple=True,
+                        ).props(
+                            'accept=".zip,.xlsx,.pdf,.csv" flat dense label="Chọn file (có thể chọn nhiều)..."'
+                        ).classes('w-full mb-1')
+                        ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
+                                  on_click=on_clear_den).props('flat dense').classes('text-xs')
+
+                        with ui.row().classes('items-center gap-3 mt-3'):
+                            ui.label('Ngày đối chiếu:').classes('text-sm text-gray-600')
+                            ngay_input_den = _ngay_input()
+                            ui.label('Bỏ trống → tự động lấy từ tên file PDF').classes(
+                                'text-xs text-gray-400')
+
+                        validate_card_den = ui.column().classes(
+                            'w-full mt-3 gap-1 p-3 rounded bg-gray-50 border')
+                        validate_card_den.set_visibility(False)
+
+                        with ui.row().classes('gap-3 mt-4 items-center'):
+                            btn_run_den = ui.button('Chạy đối chiếu đến', icon='play_arrow',
+                                                     color='red-8').classes('font-semibold')
+                            if not co_quyen_chay:
+                                btn_run_den.props('disable')
+                                btn_run_den.tooltip('Bạn không có quyền thực hiện thao tác này')
+
+                    summary_card_den = ui.card().classes('w-full p-4 mb-4')
+                    summary_card_den.set_visibility(False)
+                    with summary_card_den:
+                        ui.label('Kết quả tạm thời — Chiều đến').classes(
+                            'text-base font-semibold text-red-800 mb-2')
+                        summary_body_den = ui.row().classes('w-full gap-3 flex-wrap')
+
+                # ══════════════════════════ TAB 3 — BÁO CÁO ═════════════════
+                with ui.tab_panel(tab_baocao):
+                    with ui.card().classes('w-full p-5 mb-4'):
+                        ui.label('Kết quả — lượt chạy gần nhất').classes(
+                            'text-base font-semibold text-red-800 mb-3')
+                        bao_cao_container = ui.column().classes('w-full gap-2')
+                        with bao_cao_container:
+                            ui.label(
+                                'Chưa có kết quả — chạy đối chiếu ở tab "Timeout + Đối chiếu đi" '
+                                'hoặc "Đối chiếu đến" trước.'
+                            ).classes('text-sm text-gray-400 italic')
+
+                    # ── D4/D-5 (23/09/2026) — kết quả CŨ còn sống trên máy chủ ──────
+                    # Khác card phía trên (chỉ nhớ job của phiên trình duyệt HIỆN TẠI,
+                    # mất khi F5): đây là các lượt chạy TRƯỚC ĐÓ (kể cả tab/máy khác,
+                    # kể cả sau F5) mà server còn giữ (chưa tới mốc dọn 23h). Lọc theo
+                    # CHÍNH người đang đăng nhập ở BACKEND (`GET /api/ach/ket-qua`) —
+                    # đây là phạm vi DỮ LIỆU, không phải quyền (docs/DESIGN.md).
+                    with ui.card().classes('w-full p-5 mb-4'):
+                        with ui.row().classes('w-full items-center justify-between'):
+                            ui.label('Kết quả khác của bạn còn trên máy chủ').classes(
+                                'text-base font-semibold text-red-800')
+                            btn_lam_moi_ket_qua_cu = ui.button(
+                                icon='refresh', color='grey-6').props('flat dense round')
                         ui.label(
-                            'Coi TOÀN BỘ MIS_đi là đúng 100% (không loại dòng nào, không bổ sung REFHUB), '
-                            'chạy một mạch tới báo cáo cuối — KHÔNG dừng lại chờ xác nhận. Chỉ dùng khi '
-                            'chắc chắn không nghi ngờ dữ liệu.'
-                        ).classes('text-xs text-orange-700')
+                            'Các lượt chạy TRƯỚC ĐÓ của chính bạn (kể cả sau khi tải lại trang) '
+                            'mà máy chủ chưa dọn — kết quả bị dọn tự động sau 23h mỗi ngày.'
+                        ).classes('text-xs text-gray-500 mb-2')
+                        ket_qua_cu_container = ui.column().classes('w-full gap-2')
+                        with ket_qua_cu_container:
+                            ui.label('Đang tải...').classes('text-xs text-gray-400 italic')
 
-                # Nút Chạy / Dừng
-                with ui.row().classes('gap-3 mt-4 items-center'):
-                    btn_run = ui.button('Chạy đối chiếu', icon='play_arrow',
-                                        color='red-8').classes('font-semibold')
-                    btn_cancel = ui.button('Dừng', icon='stop_circle',
-                                           color='grey-6').classes('font-semibold')
-                    btn_cancel.set_visibility(False)
-                    if not co_quyen_chay:
-                        btn_run.props('disable')
-                        btn_run.tooltip('Bạn không có quyền thực hiện thao tác này')
-                    hint_chay_label = ui.label(
-                        'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
-                        'rồi mới chạy tiếp tới báo cáo cuối.'
-                    ).classes('text-xs text-gray-400')
+                    # ── Luồng C (23/09/2026) — Gộp kết quả pHub nhiều ngày ──────────
+                    # Bản-2 "kho 30 ngày" đã gỡ (Luồng A). Bản-3: server KHÔNG lưu gì
+                    # ngoài kết quả cuối — nạp N file TIMEOUT_KHONG_KENH_*.csv + N file
+                    # GW_CHO_PHUB_*.csv (chị Thảo tự giữ trên máy mình) + 1 file pHub
+                    # trong CÙNG 1 request. CỐ Ý dùng state RIÊNG (`phub_state`), KHÔNG
+                    # dùng chung `run_state`/khoá `gianh_cho('ach')` (C-K đã chốt —
+                    # rủi ro chồng RAM đã được người dùng chấp nhận CÓ Ý THỨC, xem
+                    # docs/Implementation-notes.html + pipeline/PLAN.md mục 4 C-K —
+                    # KHÔNG tự ý "sửa cho đúng" bằng cách bọc khoá vào đây).
+                    phub_state = {'files': {}}
 
-                def _cap_nhat_hint_chay():
-                    if state['bo_qua_checkpoint']:
-                        hint_chay_label.set_text(
-                            'Sẽ CHẠY THẲNG tới báo cáo cuối — KHÔNG dừng lại chờ xác nhận MIS_đi.'
-                        )
-                        hint_chay_label.classes(
-                            remove='text-gray-400', add='text-orange-700 font-semibold'
-                        )
-                    else:
-                        hint_chay_label.set_text(
-                            'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
-                            'rồi mới chạy tiếp tới báo cáo cuối.'
-                        )
-                        hint_chay_label.classes(
-                            remove='text-orange-700 font-semibold', add='text-gray-400'
-                        )
+                    with ui.card().classes('w-full p-5 mb-4'):
+                        ui.label('Gộp kết quả pHub nhiều ngày').classes(
+                            'text-base font-semibold text-red-800 mb-1')
+                        ui.label(
+                            'Nạp N file TIMEOUT_KHONG_KENH_*.csv + N file GW_CHO_PHUB_*.csv đã '
+                            'tải về từ các lượt chạy trước + ĐÚNG 1 file pHub (.xlsx) trong CÙNG '
+                            'một lượt. Xem 1 ngày cũng phải qua đây (nạp đủ bộ 3 loại file của '
+                            'ngày đó) — kết quả KHÔNG lưu lại trên máy chủ, tải về ngay để giữ.'
+                        ).classes('text-xs text-gray-500 mb-3')
 
-                def _on_bo_qua_change(val: bool):
-                    state['bo_qua_checkpoint'] = val
-                    checkpoint_section.set_visibility(not val)
-                    _cap_nhat_hint_chay()
+                        phub_file_label = ui.label('Chưa chọn file nào').classes(
+                            'text-xs text-gray-400 italic mb-2')
 
-                bo_qua_checkbox.on_value_change(lambda e: _on_bo_qua_change(e.value))
+                        async def on_upload_phub(e):
+                            data = e.content.read()
+                            phub_state['files'][e.name] = data
+                            names = ', '.join(phub_state['files'].keys())
+                            phub_file_label.set_text(
+                                f'Đã chọn ({len(phub_state["files"])} file, '
+                                f'{_tong_mb(phub_state):.0f} MB): {names}')
+                            phub_file_label.classes(
+                                remove='text-gray-400 italic', add='text-green-700 font-medium')
 
-                # ── Popup xác nhận lại trước khi chạy thẳng ────────────────
-                bo_qua_confirm_dialog = ui.dialog()
-                with bo_qua_confirm_dialog, ui.card().classes('p-5').style('min-width: 420px'):
-                    ui.label('Xác nhận chạy thẳng, bỏ qua Checkpoint').classes(
-                        'text-base font-semibold text-orange-800 mb-2'
-                    )
-                    ui.label(
-                        'Pipeline sẽ KHÔNG dừng lại để bạn xác nhận MIS_đi — toàn bộ được coi là đúng 100% '
-                        'và đi thẳng vào báo cáo cuối. Nếu sau này phát hiện sai sót, bạn cần chạy lại '
-                        '(bỏ tick) để đi qua Checkpoint như bình thường.'
-                    ).classes('text-sm text-gray-700 mb-4')
-                    with ui.row().classes('gap-2 justify-end w-full'):
-                        ui.button('Hủy', color='grey-6').props('flat').on(
-                            'click', bo_qua_confirm_dialog.close
-                        )
-                        btn_xac_nhan_chay_thang = ui.button(
-                            'Tôi hiểu, chạy thẳng luôn', icon='play_arrow', color='orange-8',
-                        ).classes('font-semibold')
+                        async def on_clear_phub():
+                            phub_state['files'].clear()
+                            phub_file_label.set_text('Chưa chọn file nào')
+                            phub_file_label.classes(
+                                remove='text-green-700 font-medium', add='text-gray-400 italic')
+                            phub_ket_qua_container.clear()
 
-            # ── Tiến trình ────────────────────────────────────────────────────
+                        ui.upload(
+                            on_upload=on_upload_phub, auto_upload=True, multiple=True,
+                        ).props(
+                            'accept=".xlsx,.csv" flat dense label="Chọn file (có thể chọn nhiều)..."'
+                        ).classes('w-full mb-1')
+                        ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
+                                  on_click=on_clear_phub).props('flat dense').classes('text-xs')
+
+                        with ui.row().classes('gap-3 mt-4 items-center'):
+                            btn_gop_phub = ui.button('Gộp', icon='merge_type', color='red-8').classes(
+                                'font-semibold')
+                            if not co_quyen_chay:
+                                btn_gop_phub.props('disable')
+                                btn_gop_phub.tooltip('Bạn không có quyền thực hiện thao tác này')
+
+                        phub_ket_qua_container = ui.column().classes('w-full mt-3 gap-2')
+
+                    async def _dam_bao_tran_dung_luong_phub():
+                        """Trần dung lượng dùng CHUNG `_MAX_UPLOAD`/ACH_MAX_UPLOAD_MB với
+                        Tab 1/2 (backend/api/ach.py) — lấy qua /api/ach/validate nếu
+                        `run_state['max_total_mb']` chưa có sẵn (VD người dùng vào thẳng
+                        tab Báo cáo, chưa từng chọn file ở 2 tab kia)."""
+                        if run_state['max_total_mb'] is not None:
+                            return
+                        try:
+                            res = await asyncio.to_thread(
+                                api.post, '/api/ach/validate', {'filenames': []})
+                            run_state['max_total_mb'] = res.get('max_total_mb')
+                        except Exception:
+                            pass   # không lấy được trần thì máy chủ vẫn tự chặn 413
+
+                    def _render_phub_ket_qua(res: dict):
+                        phub_ket_qua_container.clear()
+                        tong_ket = res.get('tong_ket') or {}
+                        canh_bao = res.get('canh_bao') or []
+                        ma       = res.get('ma')
+                        ten_file = res.get('ten_file')
+                        with phub_ket_qua_container:
+                            with ui.row().classes('w-full gap-3 flex-wrap'):
+                                for label, key in [
+                                    ('Hoàn thành', 'hoan_thanh'),
+                                    ('TT lệnh lỗi ngày T', 'tt_lenh_loi'),
+                                    ('Trạng thái khác', 'trang_thai_khac'),
+                                    ('Tổng', 'tong'),
+                                ]:
+                                    with ui.column().classes(
+                                        'flex-1 min-w-[9rem] p-3 rounded-lg border bg-gray-50 gap-0'
+                                    ):
+                                        ui.label(label).classes('text-xs font-medium text-gray-600')
+                                        ui.label(f'{tong_ket.get(key, 0):,}').classes(
+                                            'text-xl font-bold text-red-700')
+                            if canh_bao:
+                                with ui.column().classes(
+                                    'w-full gap-1 mt-1 p-3 rounded bg-orange-50 border border-orange-200'
+                                ):
+                                    for c in canh_bao:
+                                        ui.label(f'⚠ {c}').classes('text-xs text-orange-800')
+                            if ten_file:
+                                url = f'/api/ach/phub-gop/{ma}/tai'
+
+                                async def _tai_ket_qua_phub(u=url, name=ten_file):
+                                    try:
+                                        content = await asyncio.to_thread(
+                                            api.download, u, params={'filename': name})
+                                    except Exception as e:
+                                        if not _handle_api_error(e):
+                                            ui.notify(str(e), type='negative')
+                                        return
+                                    ui.download(content, name)
+
+                                ui.button(ten_file, icon='table_chart', color='green-7').on(
+                                    'click', _tai_ket_qua_phub
+                                ).classes('text-xs mt-2')
+
+                    async def _thuc_hien_gop_phub():
+                        if not phub_state['files']:
+                            ui.notify('Chưa chọn file nào.', type='warning')
+                            return
+
+                        await _dam_bao_tran_dung_luong_phub()
+                        loi_dung_luong = _qua_tran_dung_luong(phub_state)
+                        if loi_dung_luong:
+                            ui.notify(loi_dung_luong, type='negative', timeout=0)
+                            return
+
+                        btn_gop_phub.props('disable')
+                        phub_ket_qua_container.clear()
+                        with phub_ket_qua_container:
+                            ui.label('Đang gộp...').classes('text-xs text-gray-500 italic')
+
+                        try:
+                            res = await asyncio.to_thread(
+                                api.post_upload, '/api/ach/phub-gop',
+                                files=[('files', (name, data, 'application/octet-stream'))
+                                       for name, data in phub_state['files'].items()],
+                                timeout=300.0,
+                            )
+                        except Exception as e:
+                            phub_ket_qua_container.clear()
+                            if not _handle_api_error(e):
+                                with phub_ket_qua_container:
+                                    ui.label(_giai_thich_loi_upload(phub_state, e)).classes(
+                                        'text-xs text-red-600')
+                            return
+                        finally:
+                            if co_quyen_chay:
+                                btn_gop_phub.props(remove='disable')
+
+                        _render_phub_ket_qua(res)
+
+                    btn_gop_phub.on('click', _thuc_hien_gop_phub)
+
+            # ── Tiến trình (CHUNG) ───────────────────────────────────────────
             progress_card = ui.card().classes('w-full p-4 mb-4')
             progress_card.set_visibility(False)
             with progress_card:
@@ -290,20 +687,11 @@ async def cham_ach_page():
                 with stepper_box:
                     ui_kit.stepper(_STAGE_LABELS, 0)
 
-            # ── Kết quả tạm thời ──────────────────────────────────────────────
-            summary_card = ui.card().classes('w-full p-4 mb-4')
-            summary_card.set_visibility(False)
-            with summary_card:
-                ui.label('Kết quả tạm thời').classes('text-base font-semibold text-red-800 mb-3')
-                summary_body = ui.row().classes('w-full gap-3 flex-wrap')
-
-            # ── Log card ──────────────────────────────────────────────────────
+            # ── Log card (CHUNG) ─────────────────────────────────────────────
             with ui.card().classes('w-full p-0 mb-4'):
                 with ui.row().classes('w-full bg-gray-800 px-4 py-2 rounded-t items-center gap-2'):
                     ui.icon('terminal').classes('text-green-400 text-sm')
                     ui.label('Log xử lý').classes('text-xs font-semibold text-green-300')
-                    spinner = ui.spinner('dots', size='xs', color='green')
-                    spinner.set_visibility(False)
 
                 progress_bar = ui.linear_progress(value=0, show_value=False).classes('w-full')
                 progress_bar.set_visibility(False)
@@ -313,12 +701,11 @@ async def cham_ach_page():
                     'p-3 overflow-y-auto max-h-64 min-h-24 gap-0'
                 )
                 with log_area:
-                    ui.label('Sẵn sàng. Chọn file và bấm "Chạy đối chiếu".').classes('text-gray-500')
+                    ui.label('Sẵn sàng. Chọn file và bấm "Chạy" ở tab tương ứng.').classes('text-gray-500')
 
-            # ── Checkpoint xác nhận thủ công (popup — hiện ngay khi tới Checkpoint) ──
+            # ── Checkpoint xác nhận thủ công (chỉ phát sinh từ tab "di") ─────
             checkpoint_dialog = ui.dialog().props('persistent')
 
-            # ── Banner Chế độ B — báo lặng lẽ khi tới Checkpoint, không tự mở popup ──
             checkpoint_banner = ui.row().classes(
                 'w-full items-center gap-3 p-3 mb-4 rounded bg-orange-50 border border-orange-200'
             )
@@ -329,71 +716,79 @@ async def cham_ach_page():
                 btn_open_checkpoint = ui.button('Xem và xác nhận', icon='fact_check',
                                                 color='orange-8').props('dense')
 
-            # ── Kết quả download ─────────────────────────────────────────────
-            result_card = ui.card().classes('w-full p-5')
-            result_card.set_visibility(False)
-            with result_card:
-                ui.label('Kết quả').classes('text-base font-semibold text-red-800 mb-3')
-                download_row = ui.row().classes('flex-wrap gap-3')
+            # ── Logic CHUNG ───────────────────────────────────────────────────
 
-            # ── Logic ─────────────────────────────────────────────────────────
+            def _tong_mb(tstate: dict) -> float:
+                return sum(len(d) for d in tstate['files'].values()) / (1024 * 1024)
 
             def _append_log(msg: str):
                 with log_area:
                     ui.label(msg).classes('leading-tight')
-                state['progress'] = _bump_progress(state['progress'], msg)
-                progress_bar.set_value(state['progress'])
+                run_state['progress'] = _bump_progress(run_state['progress'], msg)
+                progress_bar.set_value(run_state['progress'])
 
             def _update_stage(stage: int, progress: float | None = None):
-                """Stage/% do SERVER tính (ach_service::_bump_stage) — trang chỉ hiển thị.
-                `_bump_progress()` phía client vẫn giữ làm đường lui cho lượt chạy mà
-                server chưa trả `stage` (job cũ còn trong RAM lúc vừa deploy)."""
-                state['stage'] = stage
+                run_state['stage'] = stage
                 progress_card.set_visibility(True)
                 if progress is not None:
-                    state['progress'] = progress
+                    run_state['progress'] = progress
                     progress_bar.set_value(progress)
                 stepper_box.clear()
                 with stepper_box:
                     ui_kit.stepper(_STAGE_LABELS, stage)
 
-            def _render_summary(summary: dict | None):
-                if not summary:
-                    return
-                summary_card.set_visibility(True)
-                summary_body.clear()
-                with summary_body:
-                    for n_key, s_key, label, icon, box_cls, txt_cls in _SUMMARY_CARDS:
-                        n = summary.get(n_key, 0)
-                        s = summary.get(s_key, 0)
+            def _render_cards(container, cards, summary: dict):
+                container.clear()
+                with container:
+                    for n_key, s_key, label, icon, box_cls, txt_cls in cards:
+                        n = summary.get(n_key)
+                        s = summary.get(s_key)
                         with ui.column().classes(
                             f'flex-1 min-w-[11rem] p-3 rounded-lg border gap-0 {box_cls}'
                         ):
                             with ui.row().classes('items-center gap-1'):
                                 ui.icon(icon).classes(f'text-sm {txt_cls}')
                                 ui.label(label).classes(f'text-xs font-medium {txt_cls}')
-                            ui.label(f'{n:,}').classes(f'text-xl font-bold {txt_cls}')
-                            ui.label(f'{s:,} VND').classes('text-xs text-gray-500')
+                            if n is None:
+                                # Chạy giản lược theo file đang có — None nghĩa là
+                                # backend CHƯA TÍNH ĐƯỢC (thiếu file), KHÔNG phải 0
+                                # dòng thật (feedback_binary_match_status).
+                                ui.label('CHƯA ĐỐI CHIẾU ĐƯỢC').classes(
+                                    'text-sm font-semibold text-gray-400 italic mt-1')
+                            else:
+                                ui.label(f'{n:,}').classes(f'text-xl font-bold {txt_cls}')
+                                ui.label(f'{s:,} VND').classes('text-xs text-gray-500')
+
+            def _render_summary(summary: dict | None):
+                """D-4 — chỉ đổ vào bộ thẻ của TAB đã khởi động job hiện tại."""
+                if not summary:
+                    return
+                if run_state['active_tab'] == 'di':
+                    summary_card_di.set_visibility(True)
+                    _render_cards(summary_body_di,      _SUMMARY_CARDS_DI,      summary)
+                    _render_cards(summary_body_timeout, _SUMMARY_CARDS_TIMEOUT, summary)
+                elif run_state['active_tab'] == 'den':
+                    summary_card_den.set_visibility(True)
+                    _render_cards(summary_body_den, _SUMMARY_CARDS_DEN, summary)
 
             def _clear_log():
                 log_area.clear()
-                state['progress'] = 0.0
+                run_state['progress'] = 0.0
                 progress_bar.set_value(0)
-                state['stage'] = 0
+                run_state['stage'] = 0
                 progress_card.set_visibility(False)
-                summary_card.set_visibility(False)
-                summary_body.clear()
+                summary_card_di.set_visibility(False)
+                summary_card_den.set_visibility(False)
+                summary_body_di.clear()
+                summary_body_den.clear()
+                summary_body_timeout.clear()
 
-            def _render_validate_result(res: dict):
-                validate_card.set_visibility(True)
-                validate_card.clear()
-                # Bộ file đã đủ, hoặc không còn đủ Tầng 0 — bỏ tick cũ. KHÔNG bỏ khi
-                # vẫn đang ở đúng tình huống Tầng 0, vì on_run() gọi lại _validate_now()
-                # ngay trước khi chạy ("chốt kiểm tra") và không được xoá tick lúc đó.
-                if res.get('ok') or not res.get('tang0_ok'):
-                    state['chi_tim_timeout'] = False
-                with validate_card:
-                    for chk in res.get('checks', []):
+            def _render_validate_result(container, res: dict, relevant_labels: set[str]):
+                container.set_visibility(True)
+                container.clear()
+                checks = [c for c in res.get('checks', []) if c['label'] in relevant_labels]
+                with container:
+                    for chk in checks:
                         icon  = 'check_circle' if chk['ok'] else 'cancel'
                         color = 'text-green-600' if chk['ok'] else 'text-red-600'
                         with ui.row().classes('items-center gap-2'):
@@ -401,86 +796,113 @@ async def cham_ach_page():
                             ui.label(chk['label']).classes('text-xs font-medium')
                         ui.label(chk['detail']).classes('text-xs text-gray-500 ml-6 -mt-1')
 
-                    # Thiếu GL02/MIS_đến nhưng đủ Tầng 0 (PDF+GW+MIS_đi) — đề nghị chế
-                    # độ chạy thiếu, CHỈ tìm Timeout không đi kênh (2026-08-21).
-                    if not res.get('ok') and res.get('tang0_ok'):
-                        thieu = ', '.join(chk['label'] for chk in res.get('checks', []) if not chk['ok'])
+                    # Chạy giản lược theo file đang có — thiếu file KHÔNG CÒN chặn
+                    # chạy (trừ PDF), chỉ báo trước phần nào sẽ "CHƯA ĐỐI CHIẾU ĐƯỢC".
+                    thieu_lst = [c['label'] for c in checks if not c['ok']]
+                    if thieu_lst and res.get('tang0_ok'):
+                        thieu = ', '.join(thieu_lst)
                         with ui.row().classes(
                             'w-full items-start gap-2 mt-3 p-3 rounded bg-orange-50 border border-orange-200'
                         ):
-                            ui.icon('warning').classes('text-orange-700 mt-1')
+                            ui.icon('info').classes('text-orange-700 mt-1')
                             with ui.column().classes('gap-0'):
-                                chi_tim_timeout_checkbox = ui.checkbox(
-                                    'Tôi biết đang thiếu file trên — chỉ chạy tìm '
-                                    '"Timeout không đi kênh"',
-                                    value=state['chi_tim_timeout'],
-                                ).props('dense').classes('text-orange-900 font-medium')
                                 ui.label(
-                                    f'Đủ PDF + GW + MIS_đi để tính Timeout không đi kênh, nhưng '
-                                    f'thiếu {thieu} — các phần đối chiếu khác (NPO/MIS thừa, huỷ, '
-                                    f'OSB...) sẽ ghi "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì số liệu thật.'
-                                ).classes('text-xs text-orange-700')
+                                    f'Thiếu {thieu} — vẫn chạy được, các mục phụ thuộc sẽ ghi '
+                                    f'"CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì số liệu thật, phần còn lại '
+                                    f'vẫn ra kết quả bình thường.'
+                                ).classes('text-xs text-orange-700 font-medium')
 
-                        def _on_chi_tim_timeout_change(val: bool):
-                            state['chi_tim_timeout'] = val
-
-                        chi_tim_timeout_checkbox.on_value_change(
-                            lambda e: _on_chi_tim_timeout_change(e.value)
-                        )
-
-            async def _validate_now() -> bool:
-                """Kiểm tra sớm bộ file theo tên — trả True nếu đủ, chặn chạy nếu thiếu.
-                Luôn cập nhật state['tang0_ok'] (đủ PDF+GW+MIS_đi cho Timeout không đi
-                kênh) — dùng bởi on_run() để biết có được đề nghị chạy thiếu hay không."""
-                state['tang0_ok'] = False
+            async def _validate_now(tab_key: str, tstate: dict, container, relevant_labels: set[str]) -> bool:
+                """Kiểm tra sớm bộ file theo tên — cập nhật tstate['tang0_ok'] (sàn
+                bắt buộc tuyệt đối DUY NHẤT còn lại: PDF, D1 23/09/2026)."""
+                tstate['tang0_ok'] = False
                 try:
-                    if not state['files']:
-                        validate_card.set_visibility(False)
+                    if not tstate['files']:
+                        container.set_visibility(False)
+                        if tab_key == 'di':
+                            run_state['mis_di_thieu'] = False
+                            _cap_nhat_hint_chay()
                         return False
                     res = await asyncio.to_thread(
                         api.post, '/api/ach/validate',
-                        {'filenames': list(state['files'].keys())},
+                        {'filenames': list(tstate['files'].keys())},
                     )
                 except Exception as e:
                     if _handle_api_error(e):
                         return False
-                    validate_card.set_visibility(True)
-                    validate_card.clear()
-                    with validate_card:
+                    container.set_visibility(True)
+                    container.clear()
+                    with container:
                         ui.label(f'Không kiểm tra được: {e}').classes('text-xs text-red-600')
                     return False
 
                 if res.get('max_total_mb'):
-                    state['max_total_mb'] = res['max_total_mb']
-                state['tang0_ok'] = bool(res.get('tang0_ok'))
-                _render_validate_result(res)
+                    run_state['max_total_mb'] = res['max_total_mb']
+                tstate['tang0_ok'] = bool(res.get('tang0_ok'))
+                if tab_key == 'di':
+                    run_state['mis_di_thieu'] = any(
+                        not chk['ok'] for chk in res.get('checks', [])
+                        if chk['label'].startswith('MIS_DI')
+                    )
+                    _cap_nhat_hint_chay()
+                _render_validate_result(container, res, relevant_labels)
                 return bool(res.get('ok'))
 
             def _stop_timer():
-                if state['timer']:
-                    state['timer'].cancel()
-                    state['timer'] = None
+                if run_state['timer']:
+                    run_state['timer'].cancel()
+                    run_state['timer'] = None
+
+            def _cap_nhat_khoa_nut_chay():
+                """D-3 — job đang CHIẾM SLOT (`job_open`, chạy HOẶC đang chờ xác nhận
+                Checkpoint) thì khoá nút Chạy của TAB CÒN LẠI (Báo cáo chưa có nút
+                Chạy ở đợt này). Không dùng `.tooltip()` để báo tên tab đang chạy —
+                Element.tooltip() LUÔN THÊM tooltip mới, không thay thế cái cũ, gọi
+                lặp lại sẽ CHỒNG NHIỀU tooltip lên cùng 1 nút; dùng `running_label`
+                (một dòng chữ luôn hiện) để nêu đích danh tab thay cho tooltip."""
+                ten_tab = _TAB_LABELS.get(run_state['active_tab'], 'một tab khác')
+                if run_state['running']:
+                    running_label.set_text(
+                        f'Đang chạy ở tab "{ten_tab}" — nút Chạy của tab còn lại tạm khoá '
+                        f'(chỉ 1 lượt/lần cho cả trang).')
+                    running_bar.set_visibility(True)
+                    spinner.set_visibility(True)
+                elif run_state['job_open']:
+                    running_label.set_text(
+                        f'Tab "{ten_tab}" đang chờ xác nhận Checkpoint MIS_đi — xử lý xong '
+                        f'rồi mới chạy được tab còn lại.')
+                    running_bar.set_visibility(True)
+                    spinner.set_visibility(False)
+                else:
+                    spinner.set_visibility(False)
+
+                if run_state['job_open']:
+                    btn_run_di.props('disable')
+                    btn_run_den.props('disable')
+                elif co_quyen_chay:
+                    btn_run_di.props(remove='disable')
+                    btn_run_den.props(remove='disable')
 
             def _stop_running(giu_nut_dung: bool = False):
                 """giu_nut_dung=True khi ngừng THEO DÕI mà job phía máy chủ vẫn còn
                 sống (mất liên lạc). Giấu nút Dừng lúc đó là cắt mất đường duy nhất
-                để dừng job mồ côi — mà job đó vẫn đang ăn RAM/CPU/đĩa của máy chủ."""
-                spinner.set_visibility(False)
-                btn_cancel.set_visibility(giu_nut_dung)
-                btn_run.set_visibility(True)
-                state['running'] = False
+                để dừng job mồ côi — mà job đó vẫn đang ăn RAM/CPU/đĩa của máy chủ.
+                job_open CHỈ tắt khi KHÔNG giu_nut_dung — mất liên lạc nghĩa là job
+                rất có thể vẫn chiếm slot trên máy chủ, mở khoá lúc đó cho phép bấm
+                Chạy tab kia sẽ tạo 2 job chồng nhau."""
+                run_state['running'] = False
+                if not giu_nut_dung:
+                    run_state['job_open'] = False
+                _cap_nhat_khoa_nut_chay()
+                if not giu_nut_dung:
+                    running_bar.set_visibility(False)
                 _stop_timer()
 
             async def _may_chu_dang_ban():
-                """Hỏi MÁY CHỦ xem có phiên nào đang chạy dở không.
-
-                Trả dict job / 'khong_hoi_duoc' / None.
-
-                Thay cho cách hỏi cũ (đã bỏ): poll đúng `state['job_id']` của TAB
-                này — F5 một cái là quên, người khác chạy thì không thấy.
-                Đây mới là câu hỏi đúng, và phải hỏi TRƯỚC khi gửi file — gửi rồi mới
-                bị từ chối thì đã tốn vài trăm MB và đúng lúc máy chủ yếu nhất.
-                """
+                """Hỏi MÁY CHỦ xem có phiên nào đang chạy dở không — TRƯỚC khi gửi
+                file, để bắt cả trường hợp người khác/tab trình duyệt khác đang chạy
+                (khác với khoá `_cap_nhat_khoa_nut_chay()` — khoá đó chỉ có tác dụng
+                trong CHÍNH phiên trình duyệt này)."""
                 try:
                     res = await asyncio.to_thread(
                         api.get, '/api/ach/dang-chay', timeout=_POLL_TIMEOUT,
@@ -489,10 +911,6 @@ async def cham_ach_page():
                     if api.la_loi_mang(e):
                         return 'khong_hoi_duoc'
                     raise
-                # `nghen` là câu trả lời của chốt chung 4 module: có giá trị cả
-                # khi ACH rảnh nhưng các module khác đã dùng hết suất chạy song
-                # song. Ưu tiên nó, nhưng chỉ khi KHÔNG phải phiên ACH của mình —
-                # phiên ACH còn cần `job` để hiện nút "Dừng".
                 nghen = res.get('nghen')
                 if res.get('job'):
                     return res['job']
@@ -501,8 +919,6 @@ async def cham_ach_page():
                 return None
 
             def _mo_ta_phien_dang_chay(job: dict) -> str:
-                # Nghẽn vì MODULE KHÁC đang chạy: chốt chung đã viết sẵn câu giải
-                # thích (nêu tên module nào), không có job ACH nào để bấm "Dừng".
                 if job.get('chi_bao'):
                     return job['chi_bao']
                 phut = job.get('tuoi_giay', 0) // 60
@@ -519,14 +935,14 @@ async def cham_ach_page():
                         f'thường đứt kết nối giữa chừng. {cach}')
 
             async def _poll():
-                if not state['job_id']:
+                if not run_state['job_id']:
                     return
 
                 try:
                     res = await asyncio.to_thread(
                         api.get,
-                        f'/api/ach/poll/{state["job_id"]}',
-                        params={'since': state['log_pos']},
+                        f'/api/ach/poll/{run_state["job_id"]}',
+                        params={'since': run_state['log_pos']},
                         timeout=_POLL_TIMEOUT,
                     )
                 except Exception as e:
@@ -534,23 +950,20 @@ async def cham_ach_page():
                         _stop_running()
                         return
                     if not api.la_loi_mang(e):
-                        # Máy chủ có trả lời, chỉ là trả lời hỏng (thường là 404
-                        # "job đã hết hạn"). Thử lại 10 lần nữa vừa vô ích vừa dẫn
-                        # tới báo sai "job vẫn đang chạy" ở dưới.
                         progress_bar.set_visibility(False)
                         _stop_running()
-                        state['job_id'] = None
+                        run_state['job_id'] = None
                         _append_log(f'[LỖI] Máy chủ từ chối theo dõi tiến trình: {e}')
                         ui.notify(str(e), type='negative', timeout=0)
                         return
-                    state['poll_fails'] += 1
-                    if state['poll_fails'] >= _MAX_POLL_FAILS:
+                    run_state['poll_fails'] += 1
+                    if run_state['poll_fails'] >= _MAX_POLL_FAILS:
                         progress_bar.set_visibility(False)
                         _stop_running(giu_nut_dung=True)
                         _append_log(
                             f'[LỖI] Mất liên lạc với máy chủ sau '
                             f'{_MAX_POLL_FAILS} lần thử ({_MAX_POLL_FAILS * int(_POLL_TIMEOUT)}s): {e}')
-                        _append_log(f'[LỖI] Job {state["job_id"]} RẤT CÓ THỂ VẪN ĐANG CHẠY '
+                        _append_log(f'[LỖI] Job {run_state["job_id"]} RẤT CÓ THỂ VẪN ĐANG CHẠY '
                                     'trên máy chủ — bấm "Dừng" trước khi chạy lại.')
                         ui.notify(
                             'Mất liên lạc với máy chủ khi theo dõi tiến trình. Job nhiều khả '
@@ -561,7 +974,7 @@ async def cham_ach_page():
                         )
                     return
 
-                state['poll_fails'] = 0
+                run_state['poll_fails'] = 0
 
                 if 'stage' in res:
                     _update_stage(res['stage'], res.get('progress'))
@@ -570,15 +983,15 @@ async def cham_ach_page():
                 new_logs = res.get('logs', [])
                 for line in new_logs:
                     _append_log(line)
-                state['log_pos'] += len(new_logs)
+                run_state['log_pos'] += len(new_logs)
 
                 status = res.get('status', '')
 
                 if status == 'awaiting_confirmation':
                     _stop_timer()
-                    spinner.set_visibility(False)
-                    state['running'] = False
-                    if state['checkpoint_mode'] == 'deferred':
+                    run_state['running'] = False
+                    _cap_nhat_khoa_nut_chay()
+                    if run_state['checkpoint_mode'] == 'deferred':
                         _show_checkpoint_banner(res)
                     else:
                         _enter_checkpoint(res)
@@ -591,16 +1004,14 @@ async def cham_ach_page():
                         _update_stage(len(_STAGE_LABELS) - 1, 1.0)
                         files = res.get('files', [])
                         _show_results(files)
-                        ui.notify('Hoàn thành! Tải file kết quả bên dưới.', type='positive')
+                        ui.notify('Hoàn thành! Xem/tải kết quả ở tab "Báo cáo".', type='positive')
                     elif status == 'error':
                         progress_bar.set_visibility(False)
                         ui.notify(f'Lỗi: {res.get("error", "")}', type='negative', timeout=0)
                     elif status == 'cancelled':
                         progress_bar.set_visibility(False)
                         checkpoint_dialog.close()
-                        # Đang chờ dừng hẳn thì on_cancel() sẽ tự báo, và báo đúng
-                        # hơn ("đã nhả bộ nhớ") — hai thông báo chồng nhau chỉ gây rối.
-                        if not state['dang_cho_dung']:
+                        if not run_state['dang_cho_dung']:
                             ui.notify('Đã dừng theo yêu cầu.', type='warning')
 
             def _mo_ta_can_xac_nhan(res: dict) -> str:
@@ -611,15 +1022,9 @@ async def cham_ach_page():
                 return 'Cần xác nhận thủ công MIS_đi.'
 
             def _enter_checkpoint(res: dict):
-                """Job đã dừng ở Checkpoint ngay sau khi tạo xong MIS_đi (Điểm 1,
-                2026-07-31) — hiện NGAY popup để người dùng tải, tick cột LOAI_BO,
-                kéo-thả (hoặc chọn) lại file rồi bấm "Chạy tiếp". Không đổi cơ chế
-                Checkpoint — chỉ đổi cách trình bày (card ẩn/hiện → popup tự mở)."""
-                btn_run.set_visibility(False)
                 btn_cancel.set_visibility(True)
-                result_card.set_visibility(False)
                 checkpoint_dialog.clear()
-                state['xac_nhan_upload'] = None
+                run_state['xac_nhan_upload'] = None
 
                 files         = res.get('files', [])
                 xac_nhan_file = files[0] if files else None
@@ -627,13 +1032,11 @@ async def cham_ach_page():
 
                 with checkpoint_dialog, ui.card().classes('p-5').style('min-width: 480px'):
                     ui.label(_mo_ta_can_xac_nhan(res)).classes(
-                        'text-base font-semibold text-orange-800 mb-1'
-                    )
+                        'text-base font-semibold text-orange-800 mb-1')
                     ui.label(f'{xac_nhan_file} đã sẵn sàng.').classes('text-sm text-gray-700 mb-2')
                     if loi_lan_truoc:
                         ui.label(f'File xác nhận vừa nộp bị từ chối: {loi_lan_truoc}').classes(
-                            'text-xs text-red-600 mb-2'
-                        )
+                            'text-xs text-red-600 mb-2')
                     ui.label(
                         '1) Tải file bên dưới · 2) Mở file, ở sheet MIS_DI_CONFIRM tick "loại bỏ" '
                         'cho dòng cần loại (để trống = giữ lại, mặc định), có thể paste thêm REFHUB '
@@ -642,7 +1045,7 @@ async def cham_ach_page():
                     ).classes('text-xs text-gray-600 mb-3')
 
                     if xac_nhan_file:
-                        url = f'/api/ach/download/{state["job_id"]}/{xac_nhan_file}'
+                        url = f'/api/ach/download/{run_state["job_id"]}/{xac_nhan_file}'
 
                         async def _tai_file_xac_nhan(u=url, fname=xac_nhan_file):
                             try:
@@ -658,17 +1061,16 @@ async def cham_ach_page():
                             'click', _tai_file_xac_nhan
                         ).classes('text-xs mb-2')
 
-                    upload_label = ui.label('Chưa chọn file đã điền — có thể kéo-thả trực tiếp vào ô bên dưới').classes(
-                        'text-xs text-gray-400 italic mb-1'
-                    )
+                    upload_label = ui.label(
+                        'Chưa chọn file đã điền — có thể kéo-thả trực tiếp vào ô bên dưới'
+                    ).classes('text-xs text-gray-400 italic mb-1')
 
                     async def on_upload_xac_nhan(e):
                         data = e.content.read()
-                        state['xac_nhan_upload'] = (e.name, data)
+                        run_state['xac_nhan_upload'] = (e.name, data)
                         upload_label.set_text(f'Đã chọn: {e.name}')
                         upload_label.classes(
-                            remove='text-gray-400 italic', add='text-green-700 font-medium'
-                        )
+                            remove='text-gray-400 italic', add='text-green-700 font-medium')
 
                     ui.upload(
                         on_upload=on_upload_xac_nhan, auto_upload=True, multiple=False,
@@ -692,138 +1094,175 @@ async def cham_ach_page():
                 checkpoint_dialog.open()
 
             def _show_checkpoint_banner(res: dict):
-                """Chế độ B — không tự mở popup, chỉ báo lặng lẽ trên màn hình. Nút
-                Dừng ẩn cho tới khi người dùng chủ động mở xác nhận — lúc đó mới gọi
-                lại đúng _enter_checkpoint() như Chế độ A (không tách logic riêng)."""
-                state['pending_checkpoint_res'] = res
-                btn_cancel.set_visibility(False)
+                run_state['pending_checkpoint_res'] = res
+                btn_cancel.set_visibility(True)
                 checkpoint_banner_label.set_text(_mo_ta_can_xac_nhan(res))
                 checkpoint_banner.set_visibility(True)
 
             def _open_pending_checkpoint():
                 checkpoint_banner.set_visibility(False)
-                _enter_checkpoint(state['pending_checkpoint_res'])
+                _enter_checkpoint(run_state['pending_checkpoint_res'])
 
             async def on_continue():
-                if not state.get('xac_nhan_upload'):
+                if not run_state.get('xac_nhan_upload'):
                     ui.notify('Chưa chọn file xác nhận đã điền.', type='warning')
                     return
 
-                name, data = state['xac_nhan_upload']
+                name, data = run_state['xac_nhan_upload']
                 checkpoint_dialog.close()
-                spinner.set_visibility(True)
                 progress_bar.set_visibility(True)
-                state['progress'] = 0.0
+                run_state['progress'] = 0.0
                 progress_bar.set_value(0)
                 _append_log(f'[Chạy tiếp] Đang nộp file xác nhận: {name}...')
 
                 try:
                     await asyncio.to_thread(
-                        api.post_upload, f'/api/ach/continue/{state["job_id"]}',
+                        api.post_upload, f'/api/ach/continue/{run_state["job_id"]}',
                         files={'file': (name, data, 'application/octet-stream')},
                     )
                 except Exception as e:
-                    spinner.set_visibility(False)
                     progress_bar.set_visibility(False)
                     checkpoint_dialog.open()
                     if not _handle_api_error(e):
                         ui.notify(str(e), type='negative')
                     return
 
-                state['running'] = True
+                run_state['running']  = True
+                run_state['job_open'] = True
+                _cap_nhat_khoa_nut_chay()
                 btn_cancel.set_visibility(True)
-                state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
+                run_state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
+
+            def _nut_tai(fname: str, job_id: str | None = None):
+                """job_id=None → job vừa chạy trong phiên hiện tại
+                (`run_state['job_id']`). Truyền `job_id` tường minh khi tải kết
+                quả của một lượt CŨ (D4 — card "Kết quả khác của bạn còn trên
+                máy chủ"), không phải job đang mở của phiên này."""
+                icon = 'table_chart' if fname.endswith('.xlsx') else 'description'
+                color = 'green-7' if fname.endswith('.xlsx') else 'blue-7'
+                jid   = job_id or run_state['job_id']
+                url   = f'/api/ach/download/{jid}/{fname}'
+
+                async def _tai_ket_qua(u=url, name=fname):
+                    try:
+                        content = await asyncio.to_thread(api.download, u)
+                    except Exception as e:
+                        if not _handle_api_error(e):
+                            ui.notify(str(e), type='negative')
+                        return
+                    ui.download(content, name)
+
+                ui.button(fname, icon=icon, color=color).on('click', _tai_ket_qua).classes('text-xs')
+
+            async def _tai_ket_qua_cu():
+                """D4 (23/09/2026) — nạp danh sách job CŨ của CHÍNH người đang
+                đăng nhập từ `GET /api/ach/ket-qua` (backend đã lọc theo
+                `nguoi_tao_id`, xem backend/api/ach.py). Bỏ qua job trùng với
+                `run_state['job_id']` — job đó đã hiện ở card "lượt chạy gần
+                nhất" phía trên, không cần lặp lại."""
+                ket_qua_cu_container.clear()
+                try:
+                    jobs = await asyncio.to_thread(api.get, '/api/ach/ket-qua')
+                except Exception as e:
+                    with ket_qua_cu_container:
+                        if not _handle_api_error(e):
+                            ui.label(f'Không tải được danh sách: {e}').classes(
+                                'text-xs text-red-600')
+                    return
+
+                jobs = [j for j in jobs if j.get('job_id') != run_state.get('job_id')]
+                with ket_qua_cu_container:
+                    if not jobs:
+                        ui.label(
+                            'Không có kết quả nào khác của bạn còn trên máy chủ.'
+                        ).classes('text-xs text-gray-400 italic')
+                        return
+                    for j in jobs:
+                        ngay_txt = f" — ngày {j['ngay']}" if j.get('ngay') else ''
+                        with ui.column().classes('w-full gap-1 mb-1 p-3 rounded border bg-gray-50'):
+                            ui.label(f"Job {j['job_id']}{ngay_txt}").classes(
+                                'text-sm font-semibold text-red-800')
+                            with ui.row().classes('flex-wrap gap-2'):
+                                for fname in j.get('files', []):
+                                    _nut_tai(fname, job_id=j['job_id'])
+
+            btn_lam_moi_ket_qua_cu.on('click', _tai_ket_qua_cu)
+
+            def _render_bao_cao(files: list[str]):
+                """D3 — thay hẳn danh sách tải phẳng bằng card theo nhóm nghiệp vụ."""
+                bao_cao_container.clear()
+                if not files:
+                    with bao_cao_container:
+                        ui.label(
+                            'Chưa có kết quả — chạy đối chiếu ở tab "Timeout + Đối chiếu đi" '
+                            'hoặc "Đối chiếu đến" trước.'
+                        ).classes('text-sm text-gray-400 italic')
+                    return
+                with bao_cao_container:
+                    for ten, mota, fs in _phan_loai_bao_cao(files):
+                        with ui.column().classes('w-full gap-1 mb-1 p-3 rounded border bg-gray-50'):
+                            ui.label(ten).classes('text-sm font-semibold text-red-800')
+                            ui.label(mota).classes('text-xs text-gray-500 mb-1')
+                            with ui.row().classes('flex-wrap gap-2'):
+                                for fname in fs:
+                                    _nut_tai(fname)
 
             def _show_results(files: list[str]):
-                result_card.set_visibility(True)
-                download_row.clear()
-                with download_row:
-                    for fname in files:
-                        icon = 'table_chart' if fname.endswith('.xlsx') else 'description'
-                        color = 'green-7' if fname.endswith('.xlsx') else 'blue-7'
-                        url   = f'/api/ach/download/{state["job_id"]}/{fname}'
+                run_state['last_files'] = files
+                _render_bao_cao(files)
 
-                        async def _tai_ket_qua(u=url, name=fname):
-                            try:
-                                content = await asyncio.to_thread(api.download, u)
-                            except Exception as e:
-                                if not _handle_api_error(e):
-                                    ui.notify(str(e), type='negative')
-                                return
-                            ui.download(content, name)
-
-                        ui.button(fname, icon=icon, color=color).on(
-                            'click', _tai_ket_qua
-                        ).classes('text-xs')
-
-            def _tong_mb() -> float:
-                return sum(len(d) for d in state['files'].values()) / (1024 * 1024)
-
-            def _qua_tran_dung_luong() -> str | None:
+            def _qua_tran_dung_luong(tstate: dict) -> str | None:
                 """Thông báo nếu bộ file vượt trần máy chủ; None nếu còn trong ngưỡng.
 
                 Phải chặn ở ĐÂY chứ không để máy chủ chặn: máy chủ trả 413 rồi đóng
                 kết nối trong khi trình duyệt còn đang gửi, nên phía gửi không bao giờ
-                đọc được cái 413 đó — nó chỉ thấy socket đứt và hiện
-                "[WinError 10054] An existing connection was forcibly closed...".
+                đọc được cái 413 đó — nó chỉ thấy socket đứt.
                 """
-                tran = state['max_total_mb']
-                tong = _tong_mb()
+                tran = run_state['max_total_mb']
+                tong = _tong_mb(tstate)
                 if not tran or tong <= tran:
                     return None
-                nang = sorted(state['files'].items(), key=lambda kv: -len(kv[1]))[:3]
+                nang = sorted(tstate['files'].items(), key=lambda kv: -len(kv[1]))[:3]
                 chi_tiet = ', '.join(f'{n} ({len(d) / (1024 * 1024):.0f} MB)' for n, d in nang)
                 return (f'Bộ file tổng {tong:.0f} MB, vượt trần {tran} MB của máy chủ — '
                         f'chưa gửi đi gì cả. Nặng nhất: {chi_tiet}. Bỏ bớt file không thuộc '
                         'phiên đối chiếu này rồi thử lại, hoặc nhờ quản trị nâng '
                         'ACH_MAX_UPLOAD_MB / MAX_REQUEST_MB trong .env.')
 
-            def _giai_thich_loi_upload(e: Exception) -> str:
-                """Kết nối đứt giữa lúc upload gần như luôn là máy chủ từ chối vì bộ file
-                quá lớn — nói ra bằng tiếng người, đừng để nguyên mã lỗi Windows."""
+            def _giai_thich_loi_upload(tstate: dict, e: Exception) -> str:
                 msg = str(e)
                 if not any(k in msg for k in
                            ('10054', '10053', 'ConnectionReset', 'RemoteProtocol',
                             'ReadError', 'WriteError')):
                     return msg
-                tran = state['max_total_mb']
+                tran = run_state['max_total_mb']
                 return (f'{msg} — Máy chủ cắt kết nối khi đang nhận file (bộ file '
-                        f'{_tong_mb():.0f} MB'
+                        f'{_tong_mb(tstate):.0f} MB'
                         + (f', trần {tran} MB' if tran else '') + '). Thường là do bộ file '
                         'quá lớn; cũng có thể backend vừa khởi động lại. Bỏ bớt file rồi thử lại.')
 
-            async def _thuc_hien_chay():
-                # Hai cửa ải trước khi gửi một byte nào — cả hai đều là bài học từ
-                # lỗi thật, không phải phòng xa: quá dung lượng, và chạy chồng phiên.
-                loi_dung_luong = _qua_tran_dung_luong()
+            async def _thuc_hien_chay(tab_key: str, tstate: dict, ngay_input):
+                loi_dung_luong = _qua_tran_dung_luong(tstate)
                 if loi_dung_luong:
                     ui.notify(loi_dung_luong, type='negative', timeout=0)
                     return
 
-                # Chặn hai lượt đối chiếu chồng nhau. `state['running']` không đủ:
-                # sau khi polling bỏ cuộc nó là False dù pipeline cũ còn chạy, và
-                # `_thuc_hien_chay()` sẽ đè `state['job_id']` — job cũ thành mồ côi,
-                # không còn ai dừng được, trong khi vẫn chiếm RAM/CPU/đĩa. Đúng
-                # cảnh đã xảy ra 19/08/2026: lần 1 mất liên lạc, lần 2 không phản hồi.
                 try:
                     dang = await _may_chu_dang_ban()
                 except Exception as e:
-                    # Không để lỗi lọt lên handler toàn cục: NiceGUI sẽ nuốt im,
-                    # màn hình đứng yên không báo gì (xem docs/DESIGN.md).
                     if not _handle_api_error(e):
                         ui.notify(str(e), type='negative')
                     return
 
                 if isinstance(dang, dict):
-                    # Nhận lại job mồ côi (F5 mất state, hoặc người khác khởi động):
-                    # không có job_id thì nút "Dừng" bấm cũng không làm gì được.
-                    if not state['job_id']:
-                        state['job_id'] = dang.get('job_id')
+                    # 24/09/2026 lượt 2 (review Khánh, đảo ngược lượt 1): không còn phân
+                    # biệt "job đã biết của chính phiên này" hay "job của người khác" —
+                    # backend /cancel cũng đã bỏ kiểm chủ job (ai có cham_ach.process
+                    # cũng huỷ được). Máy chủ báo bận thì LUÔN hiện nút Dừng kèm mô tả.
+                    run_state['job_id'] = dang.get('job_id')
                     ui.notify(_mo_ta_phien_dang_chay(dang), type='negative', timeout=0)
-                    # Nghẽn vì module KHÁC thì không có phiên ACH nào để dừng —
-                    # hiện nút "Dừng" ở đây là mời người dùng bấm một nút vô tác
-                    # dụng, rồi họ tưởng đã dừng được mà thật ra không.
-                    btn_cancel.set_visibility(bool(state['job_id']))
+                    btn_cancel.set_visibility(True)
+                    running_bar.set_visibility(True)
                     return
 
                 if dang == 'khong_hoi_duoc':
@@ -834,98 +1273,89 @@ async def cham_ach_page():
                         type='negative', timeout=0,
                     )
                     btn_cancel.set_visibility(True)
+                    running_bar.set_visibility(True)
                     return
 
                 _clear_log()
-                result_card.set_visibility(False)
                 checkpoint_dialog.close()
                 checkpoint_banner.set_visibility(False)
-                state['pending_checkpoint_res'] = None
-                state['checkpoint_mode'] = checkpoint_mode_radio.value
-                btn_run.set_visibility(False)
+                run_state['pending_checkpoint_res'] = None
+                run_state['checkpoint_mode'] = checkpoint_mode_radio.value if tab_key == 'di' else 'inline'
+                run_state['active_tab'] = tab_key
+                run_state['running']  = True
+                run_state['job_open'] = True
+                run_state['log_pos'] = 0
+                _cap_nhat_khoa_nut_chay()
                 btn_cancel.set_visibility(True)
-                spinner.set_visibility(True)
                 progress_bar.set_visibility(True)
-                state['running'] = True
-                state['log_pos'] = 0
 
                 ngay = ngay_input.value.strip() if ngay_input.value else None
+                bo_qua = run_state['bo_qua_checkpoint'] if tab_key == 'di' else False
+                # A4 — ô tick chỉ có ý nghĩa ở Tab 1 (Timeout + Đối chiếu đi), Tab 2
+                # không có ô này, luôn gửi False.
+                tao_gw_cho_phub = run_state['tao_gw_cho_phub'] if tab_key == 'di' else False
 
                 try:
                     _append_log('Đang upload file...')
-                    # /api/ach/start nhận `list[UploadFile]` → mọi file phải là part
-                    # CÙNG tên field 'files' ⇒ dùng dạng list, không dùng dict.
                     res = await asyncio.to_thread(
                         api.post_upload,
                         '/api/ach/start',
                         files=[('files', (name, data, 'application/octet-stream'))
-                               for name, data in state['files'].items()],
+                               for name, data in tstate['files'].items()],
                         data={
                             'ngay_doi_chieu': ngay or '',
-                            'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
-                            'chi_tim_timeout': str(state['chi_tim_timeout']).lower(),
+                            'bo_qua_checkpoint': str(bo_qua).lower(),
+                            'tao_gw_cho_phub': str(tao_gw_cho_phub).lower(),
                         },
                         timeout=600.0,   # bộ file ACH có thể tới hàng trăm MB
                     )
                 except Exception as e:
-                    spinner.set_visibility(False)
                     progress_bar.set_visibility(False)
                     btn_cancel.set_visibility(False)
-                    btn_run.set_visibility(True)
-                    state['running'] = False
+                    running_bar.set_visibility(False)
+                    run_state['running']  = False
+                    run_state['job_open'] = False   # upload lỗi → backend đã tự bo_job(), slot đã trả lại
+                    _cap_nhat_khoa_nut_chay()
                     if not _handle_api_error(e):
-                        ui.notify(_giai_thich_loi_upload(e), type='negative', timeout=0)
+                        ui.notify(_giai_thich_loi_upload(tstate, e), type='negative', timeout=0)
                     return
 
-                state['job_id'] = res.get('job_id')
-                _append_log(f'Job ID: {state["job_id"]}')
+                run_state['job_id'] = res.get('job_id')
+                _append_log(f'Job ID: {run_state["job_id"]}')
 
-                # Polling timer
-                state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
+                run_state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
 
-            async def on_run():
-                if state['running']:
+            async def _on_run(tab_key: str, tstate: dict, container, relevant_labels: set[str], ngay_input):
+                if run_state['job_open']:
                     return
-
-                if not state['files']:
+                if not tstate['files']:
                     ui.notify('Chưa chọn file nào.', type='warning')
                     return
 
-                # Chốt kiểm tra ngay trước khi chạy — chặn nếu thiếu/sai file.
-                # Ngoại lệ (2026-08-21): thiếu GL02/MIS_đến nhưng đủ Tầng 0 (tang0_ok)
-                # VÀ người dùng đã tự tick "chỉ chạy tìm Timeout" — cho qua, chạy chế
-                # độ chi_tim_timeout thay vì chặn cứng.
-                ok = await _validate_now()
-                if not ok and not (state['tang0_ok'] and state['chi_tim_timeout']):
-                    ui.notify('Bộ file chưa đủ/đúng — xem chi tiết bên trên trước khi chạy.',
-                              type='negative')
+                await _validate_now(tab_key, tstate, container, relevant_labels)
+                if not tstate['tang0_ok']:
+                    ui.notify('Thiếu file PDF (session) — không có gì để chạy.', type='negative')
                     return
 
-                if state['bo_qua_checkpoint']:
-                    # Lớp an toàn thêm: xác nhận lại lần nữa trước khi chạy thẳng bỏ
-                    # qua Checkpoint (2026-07-31) — tránh bấm nhầm/quên đang bật.
+                if tab_key == 'di' and run_state['bo_qua_checkpoint']:
                     bo_qua_confirm_dialog.open()
                     return
 
-                await _thuc_hien_chay()
+                await _thuc_hien_chay(tab_key, tstate, ngay_input)
+
+            async def on_run_di():
+                await _on_run('di', state_di, validate_card_di, _CHECKS_TAB_DI, ngay_input_di)
+
+            async def on_run_den():
+                await _on_run('den', state_den, validate_card_den, _CHECKS_TAB_DEN, ngay_input_den)
 
             async def _on_xac_nhan_chay_thang():
                 bo_qua_confirm_dialog.close()
-                await _thuc_hien_chay()
+                await _thuc_hien_chay('di', state_di, ngay_input_di)
 
             btn_xac_nhan_chay_thang.on('click', _on_xac_nhan_chay_thang)
 
             async def _cho_may_chu_ranh() -> bool:
-                """Chờ tới khi máy chủ thật sự rảnh. True = đã rảnh hẳn.
-
-                Gửi lệnh dừng xong mà báo luôn "đã dừng" là nói dối: cờ dừng chỉ được
-                pipeline ngó tới ở ranh giới giữa các bước, nên bước đang chạy vẫn ôm
-                nguyên vài trăm MB cho tới khi nó xong. Chạy phiên mới đúng lúc đó là
-                hai bộ dữ liệu cùng nằm trong RAM — đúng cảnh làm backend chết.
-
-                Hỏi `/dang-chay` chứ không hỏi `/poll`: câu cần trả lời là "máy chủ
-                rảnh chưa", không phải "job của tôi tới đâu rồi".
-                """
                 for _ in range(int(_HAN_CHO_DUNG / _NHIP_CHO_DUNG)):
                     await asyncio.sleep(_NHIP_CHO_DUNG)
                     try:
@@ -936,11 +1366,11 @@ async def cham_ach_page():
                 return False
 
             async def on_cancel():
-                if not state['job_id']:
+                if not run_state['job_id']:
                     return
                 try:
                     await asyncio.to_thread(
-                        api.post, f'/api/ach/cancel/{state["job_id"]}',
+                        api.post, f'/api/ach/cancel/{run_state["job_id"]}',
                         timeout=_POLL_TIMEOUT,
                     )
                 except Exception as e:
@@ -949,20 +1379,20 @@ async def cham_ach_page():
                     return
 
                 btn_cancel.disable()
-                state['dang_cho_dung'] = True
+                run_state['dang_cho_dung'] = True
                 _append_log('[Đã gửi yêu cầu dừng — chờ bước đang chạy kết thúc...]')
                 ui.notify('Đang dừng phiên cũ — chờ bước đang chạy kết thúc...', type='ongoing')
                 try:
                     da_ranh = await _cho_may_chu_ranh()
                 finally:
-                    state['dang_cho_dung'] = False
+                    run_state['dang_cho_dung'] = False
                     btn_cancel.enable()
 
                 if da_ranh:
                     _stop_timer()
                     _stop_running()
                     progress_bar.set_visibility(False)
-                    state['job_id'] = None
+                    run_state['job_id'] = None
                     _append_log('[Đã dừng hẳn — máy chủ đã nhả bộ nhớ, chạy phiên mới được rồi.]')
                     ui.notify('Đã dừng hẳn phiên cũ. Bộ nhớ đã được giải phóng — '
                               'chạy phiên mới được rồi.', type='positive', timeout=0)
@@ -975,6 +1405,26 @@ async def cham_ach_page():
                         type='negative', timeout=0,
                     )
 
-            btn_run.on('click', on_run)
+            btn_run_di.on('click', on_run_di)
+            btn_run_den.on('click', on_run_den)
             btn_cancel.on('click', on_cancel)
             btn_open_checkpoint.on('click', _open_pending_checkpoint)
+
+            # D4 — nạp danh sách "kết quả khác của bạn" ngay khi mở trang, không
+            # đợi người dùng bấm nút làm mới trước. Truyền THẲNG (không
+            # `asyncio.create_task`) — hàm async gọi trực tiếp trong lúc trang
+            # đang dựng vẫn nằm trong đúng slot NiceGUI (docs/DESIGN.md).
+            await _tai_ket_qua_cu()
+
+
+def _ngay_input():
+    """Ô nhập ngày đối chiếu — gõ tay hoặc bấm icon lịch để chọn. Dùng riêng mỗi
+    tab (mỗi tab là một lượt chạy độc lập, có thể khác ngày nhau)."""
+    with ui.input(
+        placeholder='dd/mm/yyyy  (bỏ trống = tự động từ PDF)',
+    ).props('dense outlined clearable').classes('w-44') as ngay_input:
+        with ui.menu().props('no-parent-event') as ngay_menu:
+            ui.date(mask='DD/MM/YYYY').props('first-day-of-week="1"').bind_value(ngay_input)
+        with ngay_input.add_slot('append'):
+            ui.icon('event').on('click', ngay_menu.open).classes('cursor-pointer text-gray-500')
+    return ngay_input

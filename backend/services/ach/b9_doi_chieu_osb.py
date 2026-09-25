@@ -114,7 +114,12 @@ def _gan_nguon(df: pd.DataFrame, nguon: str) -> pd.DataFrame:
 def doi_chieu_osb_di(df_mis_di_thua: pd.DataFrame, df_qt_di: pd.DataFrame, log_callback=None):
     """Tách lệnh OSB khỏi MIS_đi thừa, đối chiếu với QT đi qua CN_TRACE_TIEN (tái
     dùng `_doi_chieu()` có sẵn). Trả về (df_da_quyet_toan, df_chua_khop) — vế 2 gộp
-    cả phần OSB-MIS chưa khớp lẫn phần QT chưa khớp, phân biệt bằng cột NGUON."""
+    cả phần OSB-MIS chưa khớp lẫn phần QT chưa khớp, phân biệt bằng cột NGUON.
+
+    Vế 1 (mis_khop) GIỮ NGUYÊN index gốc kế thừa từ df_mis_di_thua — Mục 2 (bổ
+    sung 11.09.2026) cần index này ở pipeline.py để loại đúng CÁC DÒNG đã quyết
+    toán ra khỏi MIS_đi thừa (không loại theo khoá KEY_HUB vì nhiều dòng có thể
+    trùng khoá mà chỉ 1 phần khớp QT)."""
     _log = log_callback or print
     osb = df_mis_di_thua[la_lenh_osb_di(df_mis_di_thua)].copy() if len(df_mis_di_thua) else df_mis_di_thua
     mis_khop, qt_khop, mis_thua, qt_thua = _doi_chieu(
@@ -125,11 +130,16 @@ def doi_chieu_osb_di(df_mis_di_thua: pd.DataFrame, df_qt_di: pd.DataFrame, log_c
     )
     _log(f'[B9][Điểm 2] OSB đi: {len(mis_khop):,} lệnh MIS đã quyết toán khớp QT, '
          f'{len(df_chua_khop):,} dòng chưa khớp (cả 2 nguồn)')
-    return mis_khop.reset_index(drop=True), df_chua_khop.reset_index(drop=True)
+    return mis_khop, df_chua_khop.reset_index(drop=True)
 
 
 def doi_chieu_osb_den(df_mis_den_thua: pd.DataFrame, df_qt_den: pd.DataFrame, log_callback=None):
-    """Đối xứng `doi_chieu_osb_di()` — chiều đến, khóa KEY_DEN_HUB."""
+    """Đối xứng `doi_chieu_osb_di()` — chiều đến, khóa KEY_DEN_HUB.
+
+    Vế 1 (mis_khop) GIỮ NGUYÊN index gốc kế thừa từ df_mis_den_thua — Mục 2 (bổ
+    sung 11.09.2026) cần index này ở pipeline.py để loại đúng CÁC DÒNG đã quyết
+    toán ra khỏi MIS_đến thừa (không loại theo khoá KEY_DEN_HUB vì nhiều dòng có
+    thể trùng khoá mà chỉ 1 phần khớp QT)."""
     _log = log_callback or print
     osb = df_mis_den_thua[la_lenh_osb_den(df_mis_den_thua)].copy() if len(df_mis_den_thua) else df_mis_den_thua
     mis_khop, qt_khop, mis_thua, qt_thua = _doi_chieu(
@@ -140,4 +150,46 @@ def doi_chieu_osb_den(df_mis_den_thua: pd.DataFrame, df_qt_den: pd.DataFrame, lo
     )
     _log(f'[B9][Điểm 2] OSB đến: {len(mis_khop):,} lệnh MIS đã quyết toán khớp QT, '
          f'{len(df_chua_khop):,} dòng chưa khớp (cả 2 nguồn)')
-    return mis_khop.reset_index(drop=True), df_chua_khop.reset_index(drop=True)
+    return mis_khop, df_chua_khop.reset_index(drop=True)
+
+
+def tach_dien_huy_qt(df_qt_di_thua: pd.DataFrame, log_callback=None):
+    """Mục 5.1 (bổ sung 14.09.2026) — đối xứng `tach_dien_huy()` ở
+    `b10_xu_ly_npo_di_thua.py`, áp lên QT đi thừa (thay vì NPO đi thừa).
+
+    CHECK_TRÙNG = mã CN (extract từ 'CN thực hiện', VD '3512 - Agribank...' ->
+    '3512') + SO_TRACE ('Mã giao dịch'.lstrip('0')). Nhóm sum(SO_TIEN)==0 &
+    size>=2 -> huỷ trong ngày. Phần còn lại 'Kiểu giao dịch'=='Cancel' -> huỷ
+    khác ngày. Phần còn lại -> QT đi thừa thật (chưa giải thích được).
+
+    Trả về (df_huy_trong_ngay, df_huy_khac_ngay, df_qt_di_thua_con_lai)."""
+    _log = log_callback or print
+    if df_qt_di_thua is None or len(df_qt_di_thua) == 0:
+        return df_qt_di_thua, df_qt_di_thua, df_qt_di_thua
+
+    df = df_qt_di_thua.copy()
+    ma_cn = df['CN thực hiện'].astype(str).str.strip().str.extract(r'^(\d+)', expand=False)
+    if ma_cn.isna().any():
+        raise ValueError("tach_dien_huy_qt: cột 'CN thực hiện' có giá trị không đúng định dạng '<mã CN> - <tên>'.")
+    trace = df['Mã giao dịch'].astype(str).str.strip().str.lstrip('0')
+    df['_CHECK_TRUNG'] = ma_cn + trace
+
+    tong_nhom    = df.groupby('_CHECK_TRUNG')['SO_TIEN'].transform('sum')
+    so_dong_nhom = df.groupby('_CHECK_TRUNG')['_CHECK_TRUNG'].transform('size')
+    mask_huy_trong_ngay = (tong_nhom == 0) & (so_dong_nhom >= 2)
+
+    df = df.drop(columns=['_CHECK_TRUNG'])
+    df_huy_trong_ngay = df[mask_huy_trong_ngay].copy()
+
+    con_lai = df[~mask_huy_trong_ngay]
+    mask_huy_khac_ngay = con_lai['Kiểu giao dịch'].astype(str).str.strip() == 'Cancel'
+    df_huy_khac_ngay    = con_lai[mask_huy_khac_ngay].copy()
+    df_qt_di_thua_con_lai = con_lai[~mask_huy_khac_ngay].copy()
+
+    _log(f'[B9][Mục 5.1] QT đi huỷ trong ngày: {len(df_huy_trong_ngay):,} | '
+         f'huỷ khác ngày: {len(df_huy_khac_ngay):,} | QT đi thừa còn lại: {len(df_qt_di_thua_con_lai):,}')
+    return (
+        df_huy_trong_ngay.reset_index(drop=True),
+        df_huy_khac_ngay.reset_index(drop=True),
+        df_qt_di_thua_con_lai.reset_index(drop=True),
+    )

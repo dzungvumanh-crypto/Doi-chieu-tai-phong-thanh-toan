@@ -4,6 +4,31 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/09/2026 Chấm đối chiếu ACH - **Trang chia 3 tab chạy riêng, thêm nhiều phần đối chiếu và màn Gộp pHub nhiều ngày**
+    + ✅ Trang chia thành **3 tab**: **Timeout + Đối chiếu đi**, **Đối chiếu đến**, **Báo cáo**. Mỗi tab có ô nạp
+      file và nút chạy riêng. Tab **Đối chiếu đến** chạy được mà **không cần file GW đi**. Cả trang vẫn chỉ chạy
+      một lượt một lúc: đang chạy ở tab này thì nút chạy của tab kia tạm khoá
+    + ⚠️ Bỏ ô tick "Tôi biết đang thiếu file — chỉ chạy tìm Timeout không đi kênh". Nay thiếu file nào thì
+      chương trình **tự chạy phần còn tính được**, phần thiếu ghi rõ "CHƯA ĐỐI CHIẾU ĐƯỢC" chứ không hiện số 0.
+      Bắt buộc duy nhất còn lại là file **PDF phiên**. Thiếu **GW đi** thì toàn bộ phần Timeout và chiều đi
+      không chạy
+    + ⚠️ Lỡ nạp **từ 2 file GW đi** (vd của 2 ngày) vào cùng một lượt: nay báo lỗi nêu tên từng file. Trước đây
+      chương trình lặng lẽ lấy một trong hai, từng làm số "Timeout không đi kênh" sai từ 11 lên 194 dòng
+    + ✅ Nạp thêm được (đều **không bắt buộc**), mỗi loại xuất một file kết quả riêng ở tab Báo cáo:
+      **GW đến**; báo cáo **Napas BC.03** (PDF hoặc CSV chi tiết); **NPO đi thừa / QT đi thừa** của ngày trước
+      để đối chiếu **huỷ khác ngày**; file **"TO ko đi kênh" ngày cũ** để đối chiếu lại timeout các ngày trước
+    + ✅ Ô tick mới ở tab Timeout + Đối chiếu đi: **"Tạo file GW-cho-pHub"**, mặc định tắt, chạy thêm khoảng
+      1 phút. ⚠️ Ngày nào không tick thì ngày đó **không có** file này để gộp pHub, và máy chủ không giữ bản sao —
+      muốn có lại phải chạy lại cả ngày đó
+    + ✅ Tab **Báo cáo** có mục **Gộp kết quả pHub nhiều ngày**: nạp cùng lúc các file Timeout không đi kênh và
+      GW-cho-pHub đã tải về của các ngày cần gộp, kèm **đúng 1 file pHub**, rồi bấm **Gộp**. Máy chủ không lưu các
+      file này — cần gộp lần sau thì tự giữ file trên máy mình và nạp lại
+    + ✅ Tab **Báo cáo** có thêm mục **Kết quả khác của bạn còn trên máy chủ**: tải lại kết quả các lượt chạy
+      trước trong ngày (máy chủ dọn lúc 23h)
+    + ⚠️ Nhật ký chạy, file kết quả và bước nộp file xác nhận MIS_đi nay **chỉ người chạy lượt đó** xem, tải và làm
+      được, kể cả admin cũng không xem được lượt của người khác. Nút **Dừng** thì vẫn như cũ: ai được chạy ACH cũng
+      dừng được lượt đang chạy dở
+
 - 24/09/2026 Gom tập chứng từ - **Tải bìa cả nhóm nhanh hơn khoảng 2,5 lần**
     + ✅ Bấm **Tải xuống** bìa của một nhóm tập: nhóm khoảng 30 tập trước mất 3–3,5 giây, nay còn khoảng
       1,5 giây. Nguyên nhân: mỗi tập, chương trình đọc lại và chuẩn bị lại mẫu bìa từ đầu dù mẫu không đổi —
