@@ -22149,6 +22149,54 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">179</span>
+      <span class="card-title">Chấm ILO1000 — sheet hub thiếu lệnh đã đi kênh ở phiên kế tiếp (22/09: thiếu 12.471 dòng ngày 23/09)</span>
+      <span class="badge badge-done">Đã sửa, chạy lại 22.9 + 23.9 nối tiếp — 25/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Triệu chứng</span></div>
+      <p>Chạy lại 22/09 với pHub mới xuất 25/09: sheet <code>hub</code> chỉ 84.481 dòng trong khi file pHub có
+        96.952 dòng; 12.237 dòng Core "chưa khớp" (lần 1 gắn đúng "Chờ đi kênh").</p>
+
+      <div class="label"><span class="pill pill-blue">Nguyên nhân</span></div>
+      <p>Lệnh còn "Chờ đi kênh"/"Đã gửi, chờ phản hồi" khi pHub xuất 23/09 (ngày kênh trả RỖNG → luôn được giữ) thì
+        khi pHub xuất lại 25/09 đã hoàn thành với ngày kênh trả <b>23/09</b>. Cửa sổ Hub tới của
+        <code>_hub_carryover_days()</code> chỉ gồm ngày TRONG batch (Q7); batch chỉ có 22/09 nên 12.471 dòng ngày 23/09
+        bị <code>load_hub()</code> cắt.</p>
+
+      <div class="label"><span class="pill pill-green">Sửa</span></div>
+      <p><code>_hub_carryover_days()</code> luôn cộng thêm <code>_hub_forward_window()</code> (phiên Hub kế tiếp, nối
+        qua ngày nghỉ) bất kể có <code>batch_days</code>. Cửa sổ chỉ rộng hơn hoặc bằng cũ (chỉ ngày cuối batch / ngày có khoảng
+        trống trong batch bị đổi); chỉ có 1 nơi gọi (<code>pipeline.py::_run_one_day</code>).</p>
+
+      <table>
+        <tr><th>Chỉ số 22/09 (dữ liệu thật)</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Sheet hub</td><td>84.481 dòng</td><td>96.952 dòng (đủ như pHub)</td></tr>
+        <tr><td>Core chưa khớp</td><td>12.237 / 43.922</td><td>1 / 43.922 (<code>1000API28692364</code>, CN 7404, 7.112.000 — chưa tra)</td></tr>
+        <tr><td>Trace / Map dc / Ghi chú đối chiếu</td><td colspan="2">không đổi dòng nào (so từng dòng 43.922)</td></tr>
+        <tr><td>Cột TT</td><td colspan="2">đổi 12.239 dòng, đều thành "Chờ đi kênh" (12.236 từ rỗng; 3 từ Hoàn thành/HT lỗi)</td></tr>
+        <tr><td>23/09 nối tiếp từ pool 22/09 mới</td><td>9.831 chưa khớp</td><td>1 / 52.794</td></tr>
+      </table>
+      <p>3 dòng đổi từ "Hoàn thành"/"HT lỗi" sang "Chờ đi kênh": Trace trùng giữa lệnh ngày 21 và 22; bản cũ khớp nhầm,
+        bản mới đúng nhờ khoá phụ Số tiền/chi nhánh (<code>_khop_trace_trung</code>) — phản biện độc lập đã xác minh số tiền Core khớp đúng dòng Hub T+1.</p>
+
+      <div class="label"><span class="pill pill-gray">Theo dõi — có từ trước, chưa sửa</span></div>
+      <p><code>process_hub</code> (process.py ~186-189) so <b>chỉ số ngày-trong-tháng</b>, sai ở ranh giới tháng: T=30/09 với dòng Hub kênh trả
+        01/10 giữ nhãn cũ thay vì "Chờ đi kênh"; T=01/10 với dòng kênh trả 30/09 bị gắn "Chờ đi kênh" sai. Card này làm ngày cuối tháng nạp
+        thêm Hub ngày 1 tháng sau nên tiếp xúc nhiều hơn. Chưa có dữ liệu thật vắt tháng — cần xử lý riêng.
+        Ngoài ra: Trace trùng mà cả số tiền lẫn chi nhánh cũng trùng vẫn rơi về dòng đầu theo thứ tự file (có log WARNING).</p>
+
+      <div class="label"><span class="pill pill-gray">Kiểm chứng</span></div>
+      <p>3 test mới <code>TestHubCarryoverBatchMotNgay</code> (2 test đầu fail trên bản cũ, test 3 là chống hồi quy); 268 test có "ilo1000" pass;
+        ruff F821/F823/E9 sạch trên backend/frontend/tests. Bằng chứng thật chỉ từ 1 ngày (22/09, batch 1 ngày) + 23/09 nối tiếp.
+        1 lượt phản biện độc lập (Sonnet): ĐỒNG Ý.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-25</footer>
 </div>
 </body>

@@ -96,17 +96,20 @@ def _hub_carryover_days(
     batch_days: 'set[int] | None' = None,
 ) -> set[int]:
     """Cửa sổ Hub đầy đủ = `_osb_carryover_days()` (T + về trước) CỘNG cửa sổ
-    tới. Cửa sổ tới ƯU TIÊN `batch_days` nếu có: dùng `_citad_forward_days()`
-    — RỘNG BẰNG ĐÚNG cửa sổ Citad (Q7, chốt 2026-09-23, hệ quả BẮT BUỘC của
-    Q1 → (b)) — nếu Hub chỉ mở 1 phiên kế tiếp như trước trong khi Citad đã mở
-    rộng ra cả batch, dòng Citad ở ngày xa hơn trong cửa sổ sẽ có Trace rỗng
-    (không tra được qua Hub/EICP) → khoá `Map dc` cụt → khớp nhầm.
-    `batch_days=None` (hàm thuần gọi lẻ, không biết batch — VD test cũ) → rơi
-    về hành vi CŨ: chỉ 1 chuỗi nghỉ kế tiếp (`_hub_forward_window()`)."""
+    tới. Cửa sổ tới = HỢP của 2 phần (card 179):
+    (1) `batch_days` nếu có → `_citad_forward_days()`, RỘNG BẰNG ĐÚNG cửa sổ Citad
+        (Q7, chốt 2026-09-23, hệ quả BẮT BUỘC của Q1 → (b)) — nếu không, dòng Citad
+        ở ngày xa hơn trong cửa sổ sẽ có Trace rỗng → khoá `Map dc` cụt → khớp nhầm;
+    (2) LUÔN cộng `_hub_forward_window()` (phiên Hub kế tiếp, nối qua ngày nghỉ),
+        kể cả khi ngày đó KHÔNG nằm trong batch — pHub xuất sau ngày chấm mang ngày
+        kênh trả T+1 cho lệnh "chờ đi kênh" của T. Cửa sổ chỉ rộng hơn hoặc bằng
+        trước đây, không bao giờ hẹp đi."""
     days = _osb_carryover_days(ngay_int, lich)
     if batch_days is not None:
         days |= _citad_forward_days(ngay_int, batch_days)
-        return days
+    # Luôn cộng phiên Hub kế tiếp, kể cả khi ngày đó KHÔNG nằm trong batch (2026-09-25):
+    # pHub xuất sau ngày chấm thì lệnh "chờ đi kênh" của T đã mang ngày kênh trả T+1 —
+    # batch chỉ có T mà cắt T+1 là sheet hub thiếu (22.9: 12.471 dòng ngày 23/9).
     d = date(ngay_int // 10000, (ngay_int // 100) % 100, ngay_int % 100)
     for fwd in _hub_forward_window(d, lich):
         days.add(int(fwd.strftime('%Y%m%d')))
@@ -278,7 +281,8 @@ def _run_one_day(
     # Hub PHẢI mở cửa sổ tới RỘNG BẰNG ĐÚNG cửa sổ này (Q7, bắt buộc): nếu
     # không, dòng Citad ở ngày xa hơn sẽ có Trace rỗng (không tra được qua
     # Hub/EICP) → khoá Map dc cụt → khớp nhầm. batch_days=None (chưa biết
-    # batch) → cả 2 cửa sổ coi như chỉ có đúng ngày này (không đổi gì).
+    # batch) → cửa sổ Citad chỉ có đúng ngày này. Riêng Hub luôn cộng thêm phiên
+    # kế tiếp dù batch có hay không (card 179, xem `_hub_carryover_days()`).
     citad_window = _citad_forward_days(ngay_int, batch_days if batch_days is not None else {ngay_int})
 
     # ── Load song song (I/O bound) — Core đã nạp sẵn từ main_from_dir() ──

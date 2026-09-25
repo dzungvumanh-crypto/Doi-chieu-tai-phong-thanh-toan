@@ -2836,6 +2836,26 @@ class TestHubCarryoverDays:
         }
 
 
+class TestHubCarryoverBatchMotNgay:
+    def test_batch_chi_co_T_van_co_phien_ke_tiep(self):
+        """22/09/2026 (thứ 3), batch chỉ {22}: cửa sổ Hub phải có cả 23/09 — pHub xuất
+        sau ngày chấm mang ngày kênh trả T+1 cho lệnh chờ đi kênh (thiếu 12.471 dòng)."""
+        from backend.services.ilo1000.pipeline import _hub_carryover_days
+
+        assert 20260923 in _hub_carryover_days(20260922, batch_days={20260922})
+
+    def test_batch_chi_co_thu_6_noi_qua_cuoi_tuan(self):
+        from backend.services.ilo1000.pipeline import _hub_carryover_days
+
+        assert {20260912, 20260913, 20260914} <= _hub_carryover_days(20260911, batch_days={20260911})
+
+    def test_batch_nhieu_ngay_van_rong_hon_hoac_bang_citad(self):
+        from backend.services.ilo1000.pipeline import _hub_carryover_days, _citad_forward_days
+
+        b = {20260907, 20260908, 20260909}
+        assert _citad_forward_days(20260907, b) <= _hub_carryover_days(20260907, batch_days=b)
+
+
 class TestCitadForwardDays:
     def test_batch_nhieu_ngay_lien_tiep_lay_du_ca_batch(self):
         """Q1 → (b): cửa sổ của ngày ĐẦU batch gồm ĐỦ CẢ batch, không chỉ 1
