@@ -359,7 +359,7 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
   (phiên, đăng nhập đúng/sai, tài khoản bị khoá, thao tác ghi); lượt đối chiếu đang chạy, Word nền; số lỗi/cảnh báo/
   request chậm trong `app.log` 24 giờ + 5 lỗi gần nhất. Chỉ đọc. Ngưỡng cảnh báo ở đầu `backend/api/monitor.py`
   - **Nền tối** (chỉ trang này) — bảng màu chọn riêng cho nền tối; màu trạng thái luôn kèm biểu tượng + chữ
-  - **Ba biểu đồ nhìn lại 24 giờ** (`ui.echart`, đầu màn hình): CPU & RAM (vạch 90 %), mức dùng ba bể tài nguyên
+  - **Ba biểu đồ nhìn lại 24 giờ** (`ui.echart`, đầu màn hình): CPU & RAM, mức dùng ba bể tài nguyên
     theo % sức chứa, độ phản hồi backend (đứng lâu nhất mỗi ô, vạch 1000 ms). Nguồn: bảng `monitor_samples` —
     `backend/services/giam_sat_mau.py` ghi 1 dòng/phút, giữ 7 ngày, tự dọn. Mỗi ô 10 phút lấy **MAX** (không phải
     trung bình); ô không có mẫu trả `None` để đường **đứt** đúng quãng backend không chạy
