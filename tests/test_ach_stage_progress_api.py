@@ -47,7 +47,7 @@ class TestBumpStageThuanTuy:
 def _stub_main_from_dir_co_stage_va_summary(input_dir, output_dir, ngay=None, log_callback=None,
                                             cancel_event=None, dung_sau_mis_di=False,
                                             xac_nhan_path=None, summary_callback=None,
-                                            chi_tim_timeout=False):
+                                            tao_gw_cho_phub=False):
     """Giả lập main_from_dir chạy thẳng (bo_qua_checkpoint) — phát đủ mốc log
     của cả 5 stage rồi gọi summary_callback với dict mẫu, giống thứ tự thật của
     pipeline.py::main_from_dir/xuat_excel."""

@@ -85,8 +85,12 @@ def test_gui_lenh_dung_chua_lam_may_chu_ranh_ngay(admin_client):
     cho tới khi nó ngó tới cờ ở ranh giới bước kế tiếp và tự kết thúc.
 
     Đây là lý do frontend phải chờ máy chủ báo rảnh rồi mới cho chạy phiên mới —
-    tin vào "đã bấm Dừng rồi" là quay lại đúng cảnh hai bộ dữ liệu cùng trong RAM."""
-    job_id, job = ach_service._new_job()
+    tin vào "đã bấm Dừng rồi" là quay lại đúng cảnh hai bộ dữ liệu cùng trong RAM.
+
+    `nguoi_tao_id=1` khớp `_fake_admin()['id']` (tests/conftest.py) — /cancel
+    vá theo chủ job (23/09/2026, cùng lớp /download D4c) nên job không phải
+    của mình bị chặn 404, kể cả khi gọi bằng `admin_client`."""
+    job_id, job = ach_service._new_job(nguoi_tao_id=1)
     job['status'] = 'running'
 
     assert admin_client.post(f'/api/ach/cancel/{job_id}').status_code == 200
@@ -99,8 +103,11 @@ def test_gui_lenh_dung_chua_lam_may_chu_ranh_ngay(admin_client):
 
 
 def test_dung_o_buoc_cho_xac_nhan_thi_ranh_ngay(admin_client):
-    """Không có thread nào đang chạy → dừng là rảnh tức thì."""
-    job_id, job = ach_service._new_job()
+    """Không có thread nào đang chạy → dừng là rảnh tức thì.
+
+    `nguoi_tao_id=1` khớp `_fake_admin()['id']` — xem chú thích cùng lý do ở
+    `test_gui_lenh_dung_chua_lam_may_chu_ranh_ngay` phía trên."""
+    job_id, job = ach_service._new_job(nguoi_tao_id=1)
     job['status'] = 'awaiting_confirmation'
 
     assert admin_client.post(f'/api/ach/cancel/{job_id}').status_code == 200

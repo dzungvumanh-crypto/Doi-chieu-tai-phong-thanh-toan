@@ -55,7 +55,10 @@ async def bundles_page():
                     ui.label("Đang tải...").classes("text-gray-500 ml-2 text-sm")
                 groups_container = ui.column().classes("w-full")
 
-                async def _download_all_covers(group_id: int, label: str = ""):
+                async def _download_all_covers(group_id: int, label: str, btn):
+                    # Nhóm lớn dựng bìa mất vài giây — không khoá nút thì người dùng bấm lại,
+                    # backend dựng song song hai bản (log 24/09/2026: hai lượt chồng nhau)
+                    btn.props("loading")
                     try:
                         content = await asyncio.to_thread(api.download, f"/api/bundles/groups/{group_id}/cover-all")
                         fname = f"{label}.docx" if label else f"bia_chung_tu_{group_id}.docx"
@@ -63,6 +66,8 @@ async def bundles_page():
                         ui.notify("Đang tải bìa...", type="positive")
                     except Exception as e:
                         if _handle_api_error(e): return
+                    finally:
+                        btn.props(remove="loading")
 
                 async def _mark_group_printed(group_id: int):
                     try:
@@ -166,9 +171,10 @@ async def bundles_page():
                                 )
                                 with ui.row().classes("w-64 justify-end gap-2"):
                                     if api.has_feature("bundles.download_cover"):
-                                        ui.button("Tải xuống", icon="download",
-                                                  on_click=lambda g_id=gid, lbl=file_label: _download_all_covers(g_id, lbl)
-                                                  ).classes("bg-red-700 text-white text-xs px-3 py-1")
+                                        btn_tai = ui.button("Tải xuống", icon="download").classes(
+                                            "bg-red-700 text-white text-xs px-3 py-1")
+                                        btn_tai.on_click(lambda g_id=gid, lbl=file_label, b=btn_tai:
+                                                         _download_all_covers(g_id, lbl, b))
                                     if api.has_feature("bundles.mark_printed"):
                                         ui.button("In", icon="print",
                                                   on_click=lambda g_id=gid: _mark_group_printed(g_id)

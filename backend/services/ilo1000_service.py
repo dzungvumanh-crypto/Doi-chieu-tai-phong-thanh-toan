@@ -133,7 +133,7 @@ def _run(job_id: str, input_dir: str, output_dir: str):
         # `main_from_dir` chạy ở TIẾN TRÌNH RIÊNG qua chay_tach() — tham số phải pickle
         # được nên truyền ĐƯỜNG DẪN DB, không truyền sqlite3.Connection (không pickle
         # được). Tiến trình con tự mở/đóng kết nối ngay trước khi cần tra lịch nghỉ lễ
-        # (xem `pipeline.py::main_from_dir`, phát hiện qua review PR#138 — Khánh, xem card 170).
+        # (xem `pipeline.py::main_from_dir`, phát hiện qua review PR#138 — Khánh, xem card 178).
         output_path = chay_tach(
             main_from_dir, ten='Chấm ILO1000',
             input_dir=input_dir,

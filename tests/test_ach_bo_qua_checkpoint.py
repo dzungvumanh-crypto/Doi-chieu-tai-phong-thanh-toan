@@ -24,7 +24,7 @@ def _stub_ghi_nhan_tham_so(cac_lan_goi: list):
     không (xem regression bug Form() bên dưới)."""
     def _fn(input_dir, output_dir, ngay=None, log_callback=None, cancel_event=None,
            dung_sau_mis_di=False, xac_nhan_path=None, summary_callback=None,
-           chi_tim_timeout=False):
+           tao_gw_cho_phub=False):
         import os
         cac_lan_goi.append((ngay, dung_sau_mis_di))
         os.makedirs(output_dir, exist_ok=True)
@@ -63,7 +63,7 @@ def _stub_ghi_nhan_dung_sau_mis_di(cac_lan_goi: list):
     khẳng định đúng giá trị được truyền xuống pipeline theo cờ bo_qua_checkpoint."""
     def _fn(input_dir, output_dir, ngay=None, log_callback=None, cancel_event=None,
            dung_sau_mis_di=False, xac_nhan_path=None, summary_callback=None,
-           chi_tim_timeout=False):
+           tao_gw_cho_phub=False):
         import os
         cac_lan_goi.append(dung_sau_mis_di)
         os.makedirs(output_dir, exist_ok=True)

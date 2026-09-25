@@ -1,5 +1,7 @@
 """API endpoints cho tính năng Chấm đối chiếu ACH."""
 
+import shutil
+import uuid
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -7,6 +9,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core import phien_doi_chieu
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.core.uploads import (
     MAX_REQUEST_BYTES,
@@ -57,8 +60,8 @@ async def start_job(
     files: list[UploadFile],
     ngay_doi_chieu: str = Form(''),
     bo_qua_checkpoint: bool = Form(False),
-    chi_tim_timeout: bool = Form(False),
-    _=Depends(_CHAY),
+    tao_gw_cho_phub: bool = Form(False),
+    current: dict = Depends(_CHAY),
 ):
     """
     Nhận nhiều file (PDF, GL02.zip, GW.xlsx, MIS_DI.zip x2, MIS_DEN.zip x2).
@@ -69,16 +72,18 @@ async def start_job(
     2026-07-31, xem project_ach_chay_thang_bo_qua_checkpoint). Mặc định False —
     hành vi Checkpoint bắt buộc như từ trước tới nay không đổi.
 
-    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
-    — người dùng xác nhận tay (checkbox) đang thiếu GL02/MIS_đến, chỉ muốn chạy
-    để tìm "Timeout không đi kênh" (Tầng 0). Mặc định False — vẫn bắt buộc đủ
-    file như cũ, không đổi hành vi.
+    Chạy giản lược theo file đang có LUÔN bật (2026-09-16, thay cờ
+    `chi_tim_timeout` trước đây phải tự tay tick mới chạy được khi thiếu GL02/
+    MIS_đến/MIS_đi) — `main_from_dir()` tự động chạy phần còn tính được, không
+    cần xác nhận trước, không có tham số nào ở đây điều khiển việc đó nữa.
 
     LƯU Ý (bug thật phát hiện 2026-07-31, sửa cùng lúc): `ngay_doi_chieu`/
-    `bo_qua_checkpoint` PHẢI khai báo `Form(...)` tường minh — khi route có
-    `list[UploadFile]`, FastAPI KHÔNG tự suy luận tham số kiểu đơn giản khác là
-    Form field (khác giả định trước đó); để mặc định thường sẽ luôn nhận giá trị
-    default, không đọc được dữ liệu client gửi lên.
+    `bo_qua_checkpoint`/`tao_gw_cho_phub` PHẢI khai báo `Form(...)` tường minh —
+    khi route có `list[UploadFile]`, FastAPI KHÔNG tự suy luận tham số kiểu đơn
+    giản khác là Form field (khác giả định trước đó); để mặc định thường sẽ
+    luôn nhận giá trị default, không đọc được dữ liệu client gửi lên.
+
+    tao_gw_cho_phub — ô tick tuỳ chọn Tab 1 (A4, 23.09.2026), mặc định False.
     """
     if not files:
         raise HTTPException(400, 'Cần upload ít nhất 1 file.')
@@ -105,7 +110,10 @@ async def start_job(
     with phien_doi_chieu.gianh_cho('ach') as nghen:
         if nghen:
             raise HTTPException(409, nghen)
-        job_id, input_dir = ach_service.tao_job()
+        # D4a (23/09/2026) — gắn chủ job NGAY lúc tạo, lấy từ chính người gọi
+        # (Depends(_CHAY) trả dict nhân sự, KHÔNG lấy từ token/role). Dùng để
+        # lọc "kết quả của tôi" ở /ket-qua + chặn tải chéo ở /download (D4b, D4c).
+        job_id, input_dir = ach_service.tao_job(nguoi_tao_id=current['id'])
 
     # Ghi THẲNG từng khối xuống thư mục job, không gom vào RAM trước. Bản cũ
     # giữ cả lượt (tới 500 MB) trong một dict bytes rồi mới đưa xuống đĩa: đỉnh
@@ -151,8 +159,11 @@ async def start_job(
         raise
 
     ngay = ngay_doi_chieu.strip() or None
-    ach_service.chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint,
-                        chi_tim_timeout=chi_tim_timeout)
+    ach_service.chay_job(
+        job_id, ngay,
+        bo_qua_checkpoint=bo_qua_checkpoint,
+        tao_gw_cho_phub=tao_gw_cho_phub,
+    )
     return {'job_id': job_id}
 
 
@@ -195,11 +206,20 @@ def validate_files(
 async def continue_job(
     job_id: str,
     file: UploadFile,
-    _=Depends(_CHAY),
+    current: dict = Depends(_CHAY),
 ):
     """Checkpoint xác nhận thủ công tại MIS_đi (Bước 3) — nhận file
     <ngày>_ACH_ConfirmMISdi.xlsx đã điền cột LOAI_BO (và REFHUB bổ sung nếu có),
-    chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối."""
+    chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối.
+
+    Vá cùng lớp lỗ hổng tải chéo đã vá ở /download, /poll (D4c, 23/09/2026) —
+    CHỈ người đã tạo job mới tiếp tục được job qua Checkpoint. Kiểm chủ job
+    TRƯỚC khi đọc nội dung file tải lên — biết trước là bị chặn thì không cần
+    tốn công đọc/ghi dữ liệu của một request không hợp lệ."""
+    job = ach_service.get_job(job_id)
+    if job is None or job.get('nguoi_tao_id') != current['id']:
+        raise HTTPException(404, 'Job không tồn tại hoặc đã hết hạn.')
+
     data = await read_limited(file, ten='File xác nhận')
     # Chạy tiếp là chạy lại TOÀN BỘ pipeline (~4,5 GB) mà lúc chờ xác nhận ACH được tính 0 GB
     # — phải xét ngân sách RAM. `continue_job` đổi trạng thái sang running trong khoá, nên
@@ -220,15 +240,21 @@ async def continue_job(
 def poll_job(
     job_id: str,
     since: int = 0,
-    _=Depends(_XEM),
+    current: dict = Depends(_XEM),
 ):
     """
     Polling tiến độ.
     since: chỉ trả log từ dòng thứ `since` trở đi (tránh gửi lại log cũ).
     Trả về {status, logs, files, error}.
+
+    Vá cùng lớp lỗ hổng tải chéo đã vá ở /download (D4c, 23/09/2026) — CHỈ
+    người đã tạo job mới xem được log/tiến trình. Trước đây endpoint này trả
+    log cho bất kỳ ai biết job_id, không kiểm chủ job. Job cũ/giả lập không
+    có `nguoi_tao_id` (None) cũng bị chặn — None != current['id'] luôn đúng,
+    thà chặn nhầm còn hơn lộ dữ liệu (docs/SKILL.md).
     """
     job = ach_service.get_job(job_id)
-    if job is None:
+    if job is None or job.get('nguoi_tao_id') != current['id']:
         raise HTTPException(404, 'Job không tồn tại hoặc đã hết hạn.')
 
     return {
@@ -249,8 +275,27 @@ def poll_job(
 @router.post('/cancel/{job_id}')
 def cancel_job(
     job_id: str,
-    _=Depends(_CHAY),
+    current: dict = Depends(_CHAY),
 ):
+    """Đảo ngược quyết định 24/09/2026 lượt 1 (review Khánh, PR #136, lượt 2):
+    KHÔNG kiểm chủ job ở đây — bất kỳ ai có `cham_ach.process` cũng huỷ được
+    job đang chạy/đang chờ xác nhận, bất kể job của ai. Đúng hành vi gốc
+    trước khi có D4c: nút "Dừng" chỉ giải phóng chốt dùng chung
+    `gianh_cho('ach')`, không đụng dữ liệu của ai — khác `/poll`, `/download`,
+    `/continue` (đọc log, tải file kết quả, nộp file xác nhận) vẫn GIỮ NGUYÊN
+    chỉ chủ job vì các endpoint đó đụng tới dữ liệu.
+
+    Lý do đảo ngược: mã quyền huỷ-hộ riêng thêm ở lượt 1 + logic đoán "job đã
+    biết của phiên trình duyệt này hay của người khác" ở frontend có 2 bug
+    thật (job_id rỗng ở tab mới đoán nhầm là job người khác; job_id gán lại
+    dù không cho huỷ khiến lần Chạy sau đoán sai) — thực tế thường chỉ 1
+    người chạy cùng lúc nên không đáng thêm cả mã quyền + logic đoán chủ
+    phiên chỉ để tránh 1 rủi ro nhỏ (mất công chạy lại, không mất dữ liệu).
+    Xem docs/Implementation-notes.html card về ACH — "Dừng" cho lịch sử đầy đủ."""
+    job = ach_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, 'Job không tồn tại hoặc đã kết thúc.')
+
     ok = ach_service.cancel_job(job_id)
     if not ok:
         raise HTTPException(404, 'Job không tồn tại hoặc đã kết thúc.')
@@ -261,12 +306,139 @@ def cancel_job(
 def download_file(
     job_id: str,
     filename: str,
-    _=Depends(_XEM),
+    current: dict = Depends(_XEM),
 ):
-    """Tải file kết quả (.xlsx hoặc .csv)."""
+    """Tải file kết quả (.xlsx hoặc .csv).
+
+    D4c (23/09/2026, vá lỗ hổng có sẵn từ trước) — CHỈ người đã tạo job
+    (`job['nguoi_tao_id']`) mới tải được. Trước đây endpoint này không kiểm
+    chủ job: biết `job_id` (12 ký tự hex, không dò được) là tải được file của
+    bất kỳ ai (PLAN.md rủi ro #7). Trả 404 (không phải 403) khi job không
+    thuộc về mình — cùng thông điệp với "job không tồn tại" để không lộ cho
+    người không liên quan biết job_id đó CÓ tồn tại hay không.
+
+    Đây là PHẠM VI DỮ LIỆU (docs/DESIGN.md), không phải quyền: `admin` vẫn đi
+    qua `require_feature()` như mọi nơi khác, nhưng KHÔNG có ngoại lệ nào ở
+    đây cho vai admin thấy/tải job của người khác — mặc định giống mọi
+    người dùng khác (PLAN.md mục D4b, chưa có yêu cầu mở rộng riêng).
+    """
+    job = ach_service.get_job(job_id)
+    if job is None or job.get('nguoi_tao_id') != current['id']:
+        raise HTTPException(404, 'File không tồn tại hoặc job đã hết hạn.')
+
     path = ach_service.get_output_file(job_id, filename)
     if path is None:
         raise HTTPException(404, 'File không tồn tại hoặc job đã hết hạn.')
+
+    if filename.endswith('.xlsx'):
+        media = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    else:
+        media = 'text/csv; charset=utf-8-sig'
+
+    return Response(
+        content=path.read_bytes(),
+        media_type=media,
+        headers=_dl_headers(filename),
+    )
+
+
+@router.get('/ket-qua')
+def danh_sach_ket_qua(current: dict = Depends(_XEM)):
+    """D4b (23/09/2026) — liệt kê job ACH CÒN SỐNG trên máy chủ (output_dir
+    chưa bị dọn 23h) và ĐÃ CÓ file kết quả, CHỈ của chính người đang đăng
+    nhập — tab "Báo cáo" dùng để hiện thêm các lượt chạy CŨ (không phải lượt
+    vừa chạy trong phiên trình duyệt hiện tại, cái đó tab đã tự nhớ sẵn).
+
+    PHẠM VI DỮ LIỆU (docs/DESIGN.md — "Phạm vi quyền ≠ phạm vi dữ liệu"),
+    KHÔNG PHẢI quyền: không có mã quyền mới nào phát sinh ở đây, `admin`
+    cũng chỉ thấy job của chính mình (mặc định, PLAN.md mục D4b chưa có yêu
+    cầu mở rộng riêng cho vai admin).
+    """
+    return ach_service.danh_sach_ket_qua(current['id'])
+
+
+# ─── Gộp pHub nhiều ngày — bản-3 (Luồng C, 23.09.2026) ────────────────────────
+# Bản-2 "kho 30 ngày" đã gỡ (Luồng A). Bản-3 nhận N file TRONG 1 REQUEST
+# (không còn khái niệm "chọn ngày trong kho"), server không lưu gì ngoài kết
+# quả cuối. Xem `pipeline/PLAN.md` mục 4.
+
+@router.post('/phub-gop')
+async def phub_gop_endpoint(
+    files: list[UploadFile],
+    _=Depends(_CHAY),
+):
+    """Nhận N file TIMEOUT_KHONG_KENH_*.csv + N file GW_CHO_PHUB_*.csv (đã tải
+    về từ các lượt chạy ACH trước, người dùng tự giữ trên máy mình) + ĐÚNG 1
+    file pHub (.xlsx) trong CÙNG 1 request — phân loại theo NỘI DUNG
+    (`phub_gop.phan_loai_file_gop()`), gộp, trả kết quả ngay.
+
+    C-K (chốt 23/09/2026, NGƯỜI DÙNG ĐÃ CHẤP NHẬN CÓ Ý THỨC — không phải sơ
+    suất): endpoint này CỐ Ý KHÔNG chiếm khoá dùng chung
+    `phien_doi_chieu.gianh_cho('ach')`, chạy ĐỒNG BỘ như bản-2. Nếu ai đó bấm
+    Gộp đúng lúc một job ACH/ILO1000/459901/Song phương nặng khác đang chạy,
+    hai khối dữ liệu pandas cùng nằm trong RAM backend. Rủi ro này đã được
+    người dùng biết và chấp nhận — KHÔNG tự ý bọc `gianh_cho('ach')` vào đây
+    khi review/sửa sau này, xem `docs/Implementation-notes.html` (card "ACH —
+    Luồng C") + `pipeline/PLAN.md` mục 4 (C-K) trước khi định đổi.
+
+    Sửa theo review Khánh (PR #136, 24/09/2026): phần NẶNG (đọc file, gộp,
+    xuất Excel) trước đây chạy qua `asyncio.to_thread()` — bể luồng RIÊNG,
+    NGOÀI mọi giới hạn RAM/số lượt của hệ thống (`MAX_HEAVY_TASKS`, trần RAM
+    cứng Job Object). Nay ghi từng file tải lên ra một thư mục tạm dưới
+    `TEMP_DIR` (KHÔNG giữ trong RAM), rồi giao cho `ach_service.gop_phub()`
+    qua `await run_heavy(...)` — bên trong đó gọi tiếp
+    `chay_tach(phub_gop.gop_phub_tu_file, ...)` (tiến trình riêng, cùng khuôn
+    `backend/services/swift_recon/tach.py`). Việc này TỰ ĐỘNG được bảo vệ bởi
+    trần RAM cứng của Job Object dù KHÔNG chiếm khoá `gianh_cho('ach')` — xem
+    `docs/Implementation-notes.html` card 162. Thư mục tạm đầu vào bị xoá
+    NGAY sau khi xử lý xong (thành công hay lỗi), đúng nguyên tắc "không lưu
+    gì trên server ngoài đúng kết quả cuối".
+    """
+    if not files:
+        raise HTTPException(400, 'Cần upload ít nhất 1 file.')
+
+    tmp_dir = ach_service.TEMP_DIR / f'phubgop_in_{uuid.uuid4().hex[:12]}'
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        duong_dan: list[tuple[str, str]] = []
+        tong = 0
+        da_dung: set[str] = set()
+        for f in files:
+            ten = safe_filename(f.filename, f'file_{len(duong_dan)}.dat')
+            if ten in da_dung:
+                raise HTTPException(
+                    400,
+                    f"Có hai file cùng tên '{ten}' trong một lượt gộp — đổi tên hoặc bỏ bớt rồi thử lại.",
+                )
+            da_dung.add(ten)
+            path = tmp_dir / ten
+            try:
+                tong += await save_upload_to(f, path, _MAX_UPLOAD - tong)
+            except HTTPException as e:
+                if e.status_code != 413:
+                    raise
+                raise HTTPException(
+                    413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
+            duong_dan.append((ten, str(path)))
+
+        try:
+            return await run_heavy(ach_service.gop_phub, duong_dan)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.get('/phub-gop/{ma}/tai')
+def tai_ket_qua_phub_gop(
+    ma: str,
+    filename: str,
+    _=Depends(_XEM),
+):
+    """Tải 1 file kết quả (Excel, và CSV nếu vượt ngưỡng dòng) của lượt Gộp `ma`."""
+    path = ach_service.tai_ket_qua_gop(ma, filename)
+    if path is None:
+        raise HTTPException(404, 'File không tồn tại hoặc đã hết hạn.')
 
     if filename.endswith('.xlsx'):
         media = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

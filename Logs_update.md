@@ -4,6 +4,59 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/09/2026 Chấm ILO1000 - **Khớp đúng hơn qua kỳ nghỉ dài và sau giờ cutoff Citad; ghi rõ dòng nào chưa đối chiếu được**
+    + ✅ Kỳ nghỉ lễ dài (vd nghỉ Quốc khánh, Tết): chương trình tự gộp dữ liệu của các ngày nghỉ theo **lịch ngày lễ
+      và ngày làm bù đã khai trong hệ thống**, không chỉ cuối tuần như trước. ⚠️ Ngày lễ, ngày làm bù chưa khai trên
+      hệ thống thì chương trình không biết — cần khai trước khi chấm đợt có ngày đó
+    + ✅ Giao dịch sau giờ cutoff Citad (chuyển sang phiên hôm sau) nay khớp được với Citad của **ngày sau trong cùng
+      đợt nạp**, không còn bị ghi nhầm "Chờ đi kênh". Cột TT ghi đúng ngày Citad thật của từng dòng (`citad 4.9`…)
+    + ✅ Nạp lại được file **"Core thừa" / "OSB thừa"** của lần chấm trước để khớp tiếp, đặt tên file tuỳ ý
+    + ✅ File OSB xuất từ IPCAS (tên dạng `DULIEUCHITIETHACHTOAN_…`) nay được nhận, trước đây bị bỏ qua lặng lẽ
+    + ✅ Mã Trace trên Hub bị trùng giữa 2 giao dịch: chương trình xét thêm **Số tiền**, rồi **mã chi nhánh** để chọn
+      đúng giao dịch, thay vì luôn lấy dòng đầu tiên
+    + ✅ Cột mới cuối sheet citad/core: **"Ghi chú đối chiếu"**, kèm cảnh báo đầu sheet Tóm tắt. Thiếu file đầu vào
+      (Core thừa / OSB thừa / OSB hôm nay / Hub) thì dòng liên quan ghi rõ **chưa đối chiếu được vì thiếu file gì**,
+      để phân biệt với dòng đã kiểm mà không khớp thật. ⚠️ Thiếu file **Hub** thì **mọi dòng** đều có ghi chú, kể cả
+      dòng đã khớp — cần nạp Hub rồi chạy lại
+    + ⚠️ Kết quả có thể khác lần chấm trước ở đúng các trường hợp trên. Vài quy tắc vẫn đang chờ người chấm xác nhận
+      (so số tiền nào khi Trace trùng, cách ghi nhãn ngày) — thấy chỗ lệch với bảng chấm tay thì báo lại
+
+- 25/09/2026 Chấm đối chiếu ACH - **Trang chia 3 tab chạy riêng, thêm nhiều phần đối chiếu và màn Gộp pHub nhiều ngày**
+    + ✅ Trang chia thành **3 tab**: **Timeout + Đối chiếu đi**, **Đối chiếu đến**, **Báo cáo**. Mỗi tab có ô nạp
+      file và nút chạy riêng. Tab **Đối chiếu đến** chạy được mà **không cần file GW đi**. Cả trang vẫn chỉ chạy
+      một lượt một lúc: đang chạy ở tab này thì nút chạy của tab kia tạm khoá
+    + ⚠️ Bỏ ô tick "Tôi biết đang thiếu file — chỉ chạy tìm Timeout không đi kênh". Nay thiếu file nào thì
+      chương trình **tự chạy phần còn tính được**, phần thiếu ghi rõ "CHƯA ĐỐI CHIẾU ĐƯỢC" chứ không hiện số 0.
+      Bắt buộc duy nhất còn lại là file **PDF phiên**. Thiếu **GW đi** thì toàn bộ phần Timeout và chiều đi
+      không chạy
+    + ⚠️ Lỡ nạp **từ 2 file GW đi** (vd của 2 ngày) vào cùng một lượt: nay báo lỗi nêu tên từng file. Trước đây
+      chương trình lặng lẽ lấy một trong hai, từng làm số "Timeout không đi kênh" sai từ 11 lên 194 dòng
+    + ✅ Nạp thêm được (đều **không bắt buộc**), mỗi loại xuất một file kết quả riêng ở tab Báo cáo:
+      **GW đến**; báo cáo **Napas BC.03** (PDF hoặc CSV chi tiết); **NPO đi thừa / QT đi thừa** của ngày trước
+      để đối chiếu **huỷ khác ngày**; file **"TO ko đi kênh" ngày cũ** để đối chiếu lại timeout các ngày trước
+    + ✅ Ô tick mới ở tab Timeout + Đối chiếu đi: **"Tạo file GW-cho-pHub"**, mặc định tắt, chạy thêm khoảng
+      1 phút. ⚠️ Ngày nào không tick thì ngày đó **không có** file này để gộp pHub, và máy chủ không giữ bản sao —
+      muốn có lại phải chạy lại cả ngày đó
+    + ✅ Tab **Báo cáo** có mục **Gộp kết quả pHub nhiều ngày**: nạp cùng lúc các file Timeout không đi kênh và
+      GW-cho-pHub đã tải về của các ngày cần gộp, kèm **đúng 1 file pHub**, rồi bấm **Gộp**. Máy chủ không lưu các
+      file này — cần gộp lần sau thì tự giữ file trên máy mình và nạp lại
+    + ✅ Tab **Báo cáo** có thêm mục **Kết quả khác của bạn còn trên máy chủ**: tải lại kết quả các lượt chạy
+      trước trong ngày (máy chủ dọn lúc 23h)
+    + ⚠️ Nhật ký chạy, file kết quả và bước nộp file xác nhận MIS_đi nay **chỉ người chạy lượt đó** xem, tải và làm
+      được, kể cả admin cũng không xem được lượt của người khác. Nút **Dừng** thì vẫn như cũ: ai được chạy ACH cũng
+      dừng được lượt đang chạy dở
+
+- 24/09/2026 Gom tập chứng từ - **Tải bìa cả nhóm nhanh hơn khoảng 2,5 lần**
+    + ✅ Bấm **Tải xuống** bìa của một nhóm tập: nhóm khoảng 30 tập trước mất 3–3,5 giây, nay còn khoảng
+      1,5 giây. Nguyên nhân: mỗi tập, chương trình đọc lại và chuẩn bị lại mẫu bìa từ đầu dù mẫu không đổi —
+      nay chỉ chuẩn bị một lần rồi dùng cho mọi tập
+    + ✅ Nút **Tải xuống** hiện vòng xoay trong lúc đang tạo bìa và không bấm lại được — trước đây mấy giây chờ
+      không có dấu hiệu gì nên dễ bấm hai lần
+    + ✅ Tên phòng / tên người có ký tự **`&`** hoặc **`<`** (vd "Phòng KSNB&HTVH") nay in đủ trên bìa — trước đây
+      bị cắt mất phần chữ phía sau mà không báo lỗi
+    + ℹ️ Màn *Nhật ký hệ thống* không còn báo **"Request chậm"** cho việc tải bìa dưới 8 giây — đây là việc tạo
+      file Word, cùng mức với xuất Excel/Word khác
+
 - 24/09/2026 Giám sát hệ thống - **Nền tối + biểu đồ nhìn lại 24 giờ**
     + ✅ Màn hình chuyển sang **nền tối** cho đỡ chói mắt khi mở lâu
     + ✅ **Ba biểu đồ 24 giờ qua** ngay đầu màn hình — để mở lên là biết *cả ngày hôm nay đã có lúc nào

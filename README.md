@@ -503,6 +503,9 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
     315 KB cho kho 1 năm; đo trên dữ liệu nhân theo năm, 5 năm là 513 ms / 5,1 MB và còn tăng
     tiếp) trong khi giao diện không đọc tới. Chi tiết tập lấy ở `GET /api/bundles/groups/{id}` —
     mọi đường in bìa / tải bìa đều đi qua đó, không đổi
+  - Tải bìa cả nhóm: phần chuẩn bị mẫu docxtpl (làm sạch XML + dịch Jinja) chỉ chạy **một lần**
+    rồi dùng lại cho mọi tập; nhóm 31 tập 2,0 s → 0,8 s (máy dev). Render bật **autoescape** —
+    tên có `&`/`<` (vd "KSNB&HTVH") không còn bị cắt. Nút "Tải xuống" hiện vòng xoay khi đang dựng
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa **ngày** và **số chứng từ** ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật. Sửa ngày chỉ ghi lại `cover_units` của tập, **không đụng** số liệu bàn giao gốc của phòng nguồn (`document_entries`); mỗi dòng phải còn ít nhất một ngày, xoá hết ngày thì báo lỗi và giữ nguyên số đang nhập
   - *Tab "In bìa hồ sơ"*: Nạp file Excel tra cứu hồ sơ (`LT_HS_TRACUU_*.xls`) xuất từ chương trình lưu trữ → điền vào mẫu bìa **M01/LHS** (`templates/Phòng KSNB&HTVH/Bàn giao cho lưu trữ/Bia_ho_so.docx`), giữ nguyên toàn bộ định dạng của mẫu. Lấy cột **I** *Mã vạch* (ký hiệu thông tin + chuỗi barcode), cột **C** *Tên hồ sơ* (dòng tiêu đề + **Ngày mở** = ngày **đầu tiên** xuất hiện trong tên), cột **F** *Ngày CVKT*, cột **G** *Số tờ*. Chọn hồ sơ cần in trên bảng rồi tải về **1 file Word nhiều trang** (mỗi hồ sơ 1 trang) hoặc **ZIP mỗi hồ sơ 1 file**. Máy in phải cài font **"3 of 9 Barcode"**, nếu không dòng mã vạch in ra thành chữ thường và máy quét không đọc được
 - **Báo cáo** (menu con):
@@ -782,6 +785,28 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
   Cần giữ lâu hơn thì tải về máy trong ngày
 - Phân quyền riêng theo nhóm: `menu.cham_ach` = xem trang / kiểm tra file / tải kết quả,
   `cham_ach.process` = được bấm Chạy, Chạy tiếp sau Checkpoint và Dừng
+
+### Module Chấm ILO1000
+- Đối chiếu 4 nguồn Citad ↔ Core (GL02) ↔ PaymentHub ↔ OSB, kèm EICP. Menu: **Đối chiếu → Phòng Thanh toán →
+  Chấm ILO1000** (mã quyền `menu.cham_ilo1000`). Pipeline ở `backend/services/ilo1000/`, chạy ở tiến trình riêng
+  qua `chay_tach()` như các cửa đối chiếu khác
+- Nhận dạng file: hầu hết theo tên; **OSB gốc IPCAS** (`DULIEUCHITIETHACHTOAN_…xlsx`) và **file pool tồn đọng**
+  nhận theo **nội dung** (`detect.py::_sniff_osb_xlsx()` / `_sniff_pool_xlsx()`), người chấm đặt tên tuỳ ý
+- **Ngày nghỉ**: cửa sổ gộp dữ liệu chuyển tiếp (carryover) tính theo lịch thật `tai_lich()` — ngày lễ + ngày làm
+  bù khai ở màn Nghỉ phép / Sổ trực — không còn lùi cứng 3 ngày cho Thứ 2. `main_from_dir(db_path=...)` nhận
+  **đường dẫn** CSDL, tiến trình con tự mở kết nối (kết nối SQLite không gửi qua tiến trình được)
+- **Cửa sổ Citad nhìn tới**: sau giờ cutoff Citad, giao dịch sang phiên sau → dòng Core ngày T khớp được với Citad
+  của **mọi ngày có mặt trong batch**; Hub mở cửa sổ tương ứng. Nhãn TT `citad {d}.{m}` theo `TRX_DATE` thật của
+  từng dòng Citad
+- **Pool tồn đọng xuyên batch**: nạp lại file "Core thừa" / "OSB thừa" của lần chấm trước để khớp tiếp
+- **Trace Hub trùng** giữa ≥ 2 giao dịch: chỉ ở các Trace trùng mới thêm khoá phụ Số tiền rồi mã chi nhánh
+  (`lookups['trace_trung']`); giao dịch không trùng giữ nguyên cách khớp "dòng đầu tiên" như bảng tay
+- Cột cuối **"Ghi chú đối chiếu"** (sheet citad/core) + khối cảnh báo đầu sheet Tóm tắt: phân biệt **chưa đối chiếu
+  được** (thiếu pool Core thừa / pool OSB thừa / OSB hôm nay / Hub) với **đã kiểm mà không khớp**. Thiếu Hub
+  đánh dấu **mọi dòng**, kể cả dòng đã khớp (thiếu Hub làm sai khoá Trace); ba nguồn kia chỉ đánh dấu dòng TT rỗng
+- Còn chờ người chấm xác nhận nghiệp vụ (code đang dùng mặc định): so CRAMOUNT hay DRAMOUNT/phí ở khoá phụ Số tiền;
+  thứ tự Số tiền → chi nhánh; định dạng nhãn `citad {d}.{m}`; cột "Đối chiếu" của pool ghi ngày báo cáo hay
+  `TRX_DATE`. Chi tiết: card 170–178 trong `docs/Implementation-notes.html`
 
 ### Module Đối chiếu CITAD ↔ PaymentHub
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày

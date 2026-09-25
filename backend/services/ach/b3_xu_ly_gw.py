@@ -26,16 +26,21 @@ def _xu_ly_sheet(df_raw: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _phan_loai_sheet_theo_session(df: pd.DataFrame, session_id: str) -> str:
-    """Phân loại 1 sheet (đã làm sạch header) theo SessionId so với session mục tiêu.
+def _phan_loai_sheet_theo_session(df: pd.DataFrame, session_id: str,
+                                   session_col: str = 'SessionId') -> str:
+    """Phân loại 1 sheet (đã làm sạch header) theo cột session so với session mục tiêu.
 
-    'thuan_nhat'      — sheet chỉ chứa đúng 1 SessionId và bằng session mục tiêu.
+    `session_col` — tên cột session trong sheet; mặc định 'SessionId' (file GW đi).
+    File "đến_GW" dùng tên cột khác ('Session ID', có khoảng trắng) — truyền qua
+    tham số này, KHÔNG hard-code lại logic chọn sheet.
+
+    'thuan_nhat'      — sheet chỉ chứa đúng 1 giá trị session và bằng session mục tiêu.
     'lan_can'         — sheet có session mục tiêu nhưng lẫn cả session khác.
-    'khong_lien_quan' — không có cột SessionId, hoặc không chứa session mục tiêu.
+    'khong_lien_quan' — không có cột session, hoặc không chứa session mục tiêu.
     """
-    if 'SessionId' not in df.columns:
+    if session_col not in df.columns:
         return 'khong_lien_quan'
-    sids = df['SessionId'].astype(str).str.strip().unique()
+    sids = df[session_col].astype(str).str.strip().unique()
     sid  = str(session_id).strip()
     if len(sids) == 1 and sids[0] == sid:
         return 'thuan_nhat'
@@ -44,8 +49,12 @@ def _phan_loai_sheet_theo_session(df: pd.DataFrame, session_id: str) -> str:
     return 'khong_lien_quan'
 
 
-def _loai_trung_msgref(df: pd.DataFrame, log_fn) -> pd.DataFrame:
-    """Phòng vệ cuối: loại dòng trùng MSGREF (mỗi giao dịch chỉ tính 1 lần)."""
+def _loai_trung_msgref(df: pd.DataFrame, log_fn, session_col: str = 'SessionId') -> pd.DataFrame:
+    """Phòng vệ cuối: loại dòng trùng MSGREF (mỗi giao dịch chỉ tính 1 lần).
+
+    `session_col` không dùng trong hàm này (không thao tác cột session) — chỉ giữ
+    để đồng bộ chữ ký với `_phan_loai_sheet_theo_session`/`_chon_du_lieu_gw`, gọi
+    xuyên suốt 3 hàm này với cùng 1 tên cột session khi cần."""
     if 'MSGREF' not in df.columns or len(df) == 0:
         return df.reset_index(drop=True)
     truoc = len(df)
@@ -70,10 +79,14 @@ def _gop_gw_goc(sheets: dict) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def _chon_du_lieu_gw(sheets: dict, session_id: str, log_fn) -> pd.DataFrame:
+def _chon_du_lieu_gw(sheets: dict, session_id: str, log_fn,
+                      session_col: str = 'SessionId') -> pd.DataFrame:
     """Chọn dữ liệu GW đúng session_id từ các sheet đã đọc.
 
-    Ưu tiên: sheet có SessionId THUẦN NHẤT khớp session mục tiêu — đọc riêng sheet
+    `session_col` — tên cột session (mặc định 'SessionId' của file GW đi); truyền
+    'Session ID' (có khoảng trắng) khi gọi cho file "đến_GW" (`b13_xu_ly_gw_den.py`).
+
+    Ưu tiên: sheet có session THUẦN NHẤT khớp session mục tiêu — đọc riêng sheet
     đó, không đụng tới sheet khác (tránh đọc trùng dữ liệu khi 1 workbook có sheet
     tổng hợp nhiều session VÀ sheet lọc riêng cho từng ngày, như đã phát hiện ở file
     GW ngày 06-08/07/2026 — "Sheet 1" gộp 4 session, "đi GW <ngày>" chỉ 1 session).
@@ -82,7 +95,7 @@ def _chon_du_lieu_gw(sheets: dict, session_id: str, log_fn) -> pd.DataFrame:
     """
     thuan_nhat, lan_can = [], []
     for name, df in sheets.items():
-        loai = _phan_loai_sheet_theo_session(df, session_id)
+        loai = _phan_loai_sheet_theo_session(df, session_id, session_col)
         if loai == 'thuan_nhat':
             thuan_nhat.append((name, df))
         elif loai == 'lan_can':
@@ -90,7 +103,7 @@ def _chon_du_lieu_gw(sheets: dict, session_id: str, log_fn) -> pd.DataFrame:
 
     if len(thuan_nhat) == 1:
         name, df = thuan_nhat[0]
-        log_fn(f'[B3] Chọn sheet "{name}" ({len(df):,} dòng) — SessionId thuần nhất = {session_id}, '
+        log_fn(f'[B3] Chọn sheet "{name}" ({len(df):,} dòng) — {session_col} thuần nhất = {session_id}, '
                 f'không đọc/gộp sheet khác trong file.')
         return df.reset_index(drop=True)
 
@@ -99,22 +112,22 @@ def _chon_du_lieu_gw(sheets: dict, session_id: str, log_fn) -> pd.DataFrame:
         log_fn(f'[B3][WARN] Có {len(thuan_nhat)} sheet cùng thuần nhất session {session_id}: '
                 f'{names} — gộp lại và loại trùng theo MSGREF.')
         df = pd.concat([d for _, d in thuan_nhat], ignore_index=True)
-        return _loai_trung_msgref(df, log_fn)
+        return _loai_trung_msgref(df, log_fn, session_col)
 
     if lan_can:
         names = [n for n, _ in lan_can]
-        log_fn(f'[B3][WARN] Không tìm thấy sheet SessionId thuần nhất cho session {session_id} — '
+        log_fn(f'[B3][WARN] Không tìm thấy sheet {session_col} thuần nhất cho session {session_id} — '
                 f'lọc dòng đúng session từ {len(lan_can)} sheet lẫn nhiều session ({names}) rồi '
                 f'loại trùng theo MSGREF.')
         frames = []
         for _, df in lan_can:
             sid = str(session_id).strip()
-            frames.append(df[df['SessionId'].astype(str).str.strip() == sid])
+            frames.append(df[df[session_col].astype(str).str.strip() == sid])
         df = pd.concat(frames, ignore_index=True)
-        return _loai_trung_msgref(df, log_fn)
+        return _loai_trung_msgref(df, log_fn, session_col)
 
     log_fn(f'[B3][WARN] Không tìm thấy dữ liệu GW nào cho session {session_id} trong file.')
-    cot_mau = next((df.columns for df in sheets.values() if 'SessionId' in df.columns), None)
+    cot_mau = next((df.columns for df in sheets.values() if session_col in df.columns), None)
     return pd.DataFrame(columns=cot_mau) if cot_mau is not None else pd.DataFrame()
 
 

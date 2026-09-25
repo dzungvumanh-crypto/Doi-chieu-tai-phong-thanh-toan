@@ -221,3 +221,182 @@ def ket_qua_mis_den_thua_t2(df_mis_den_thua_t2: pd.DataFrame | None, df_qt_den: 
         KETQUA_THUONG_KHOP, KETQUA_THUONG_CHUA, KETQUA_THUONG_CHUA, 'KetQua-Thuong-Den', log_callback,
     )
     return pd.concat([ket_qua_osb, ket_qua_thuong], ignore_index=True, sort=False)
+
+
+# ─── Mục 5 (bổ sung 11.09.2026, đã nối vào main_from_dir() ở pipeline.py) — đối
+# chiếu chéo NPO_đi thừa (T-2) với "huỷ khác ngày"
+# (T-1, chính là df_dien_huy_khac_ngay đang có trong bộ nhớ ở lần chạy hiện tại,
+# output của tach_dien_huy() ở b10_xu_ly_npo_di_thua.py — KHÔNG phải file mới) ──
+
+HUY_NGAY_T1 = 'huỷ ngày T-1'
+NPO_NGAY_T2 = 'NPO ngày T-2'
+
+_COLS_BAT_BUOC_NPO_THUA_T2 = ['TRBRCD', 'REFERENCE', 'CRAMOUNT']
+
+
+def doc_npo_di_thua_t2(path: str) -> pd.DataFrame:
+    """Đọc file NPO_đi thừa T-2 — chấp nhận .csv (chương trình tự xuất, khi vượt
+    CSV_THRESHOLD) lẫn .xlsx (người chấm tự sửa tay). Tính lại SO_TRACE từ
+    REFERENCE — sheet NPO_DI_THUA xuất Excel KHÔNG có cột SO_TRACE (_COLS_NPO ở
+    pipeline.py không liệt kê SO_TRACE, xem b2_xu_ly_gl02.py::xu_ly_gl02()), phải
+    tính lại ĐÚNG NGUYÊN công thức gốc (copy y hệt, không diễn giải lại):
+    REFERENCE[7:19], lstrip('0') rồi mặc định '0' nếu rỗng SAU lstrip, nhưng ''
+    (không phải '0') nếu REFERENCE gốc null/quá ngắn (_extracted là NaN)."""
+    if path.lower().endswith('.csv'):
+        df = pd.read_csv(path, dtype=str, encoding='utf-8-sig', sep=None, engine='python')
+    else:
+        df = pd.read_excel(path, dtype=str, engine='calamine')
+    df.columns = [c.strip() for c in df.columns]
+    missing = [c for c in _COLS_BAT_BUOC_NPO_THUA_T2 if c not in df.columns]
+    if missing:
+        raise ValueError(f'File NPO_đi thừa T-2 thiếu cột {missing} — có thể bị sửa cấu trúc: {path}')
+
+    df = df.copy()
+    df['CRAMOUNT'] = doc_so_tien(df['CRAMOUNT'], f'NPO_đi thừa T-2: {path}', ten_cot='CRAMOUNT')
+
+    # SO_TRACE — copy Y HỆT công thức gốc b2_xu_ly_gl02.py::xu_ly_gl02(), KHÔNG
+    # được rút gọn còn 1 nhánh (dự án đã bị phản biện phát hiện bản rút gọn sai).
+    # KHÔNG được thêm .astype(str) trước .str[7:19] — REFERENCE null (dtype=str
+    # khi đọc file giữ NaN dạng float) sẽ bị .astype(str) biến thành chuỗi 'nan',
+    # làm mất luôn nhánh NaN của where() phía dưới, không còn phân biệt được với
+    # REFERENCE có giá trị thật.
+    _extracted     = df['REFERENCE'].str[7:19]
+    _stripped      = _extracted.str.lstrip('0')
+    df['SO_TRACE'] = _stripped.where(_stripped != '', other='0').where(_extracted.notna(), other='')
+
+    df['_CHECK_TRUNG'] = df['TRBRCD'].astype(str).str.strip() + df['SO_TRACE'].astype(str)
+    return df
+
+
+def doi_chieu_huy_cheo_ngay(df_npo_thua_t2: pd.DataFrame | None,
+                           df_huy_khac_ngay_t1: pd.DataFrame,
+                           log_callback=None):
+    """Mục 5 (11.09.2026) — trả về (df_npo_thua_t2_ket_qua, df_huy_ket_qua) với
+    cột KET_QUA gắn thêm, GIỮ ĐỦ toàn bộ dòng (không rơi dòng nào).
+
+    THẬN TRỌNG (phát hiện qua phản biện, 11.09.2026): CHỈ gắn nhãn khi 1 nhóm
+    CHECK_TRÙNG có ĐÚNG 1 dòng ở MỖI nguồn (1 NPO thừa T-2 <-> 1 huỷ khác ngày
+    T-1) VÀ tổng CRAMOUNT = 0 — khác tach_dien_huy() ở b10 (cho phép nhóm ≥2
+    dòng CÙNG 1 nguồn vì đã verify dữ liệu thật luôn đúng 2 dòng). Ở đây gộp
+    CHÉO 2 FILE KHÁC NHAU, CHƯA có dữ liệu thật để verify giả định tương tự —
+    nhóm có ≥2 dòng ở 1 trong 2 nguồn bị coi là MƠ HỒ, KHÔNG gắn nhãn (an toàn
+    hơn là đoán), chỉ log số nhóm mơ hồ để người chấm tự kiểm tra tay."""
+    _log = log_callback or print
+    if df_npo_thua_t2 is None or len(df_npo_thua_t2) == 0:
+        return df_npo_thua_t2, df_huy_khac_ngay_t1
+
+    npo_t2 = df_npo_thua_t2.copy()
+    if '_CHECK_TRUNG' not in npo_t2.columns:
+        raise ValueError("doi_chieu_huy_cheo_ngay: df_npo_thua_t2 thiếu cột '_CHECK_TRUNG' — phải đọc qua doc_npo_di_thua_t2() trước.")
+
+    huy = df_huy_khac_ngay_t1.copy()
+    huy['_CHECK_TRUNG'] = huy['TRBRCD'].astype(str).str.strip() + huy['SO_TRACE'].astype(str)
+
+    npo_t2['_NGUON'] = 'NPO_T2'
+    huy['_NGUON']    = 'HUY_T1'
+    gop = pd.concat([
+        npo_t2[['_CHECK_TRUNG', 'CRAMOUNT', '_NGUON']],
+        huy[['_CHECK_TRUNG', 'CRAMOUNT', '_NGUON']],
+    ], ignore_index=True)
+
+    so_dong_nhom = gop.groupby('_CHECK_TRUNG')['_CHECK_TRUNG'].transform('size')
+    tong_nhom    = gop.groupby('_CHECK_TRUNG')['CRAMOUNT'].transform('sum')
+    # Đúng 1-đối-1: tổng đúng 2 dòng trong nhóm (so_dong_nhom==2) VÀ cả 2 nguồn
+    # đều có mặt (đảm bảo là 1 NPO + 1 huỷ, không phải 2 dòng cùng 1 nguồn).
+    co_ca_2_nguon = gop.groupby('_CHECK_TRUNG')['_NGUON'].transform(lambda s: s.nunique() == 2)
+    mask_khop_1doi1 = (so_dong_nhom == 2) & co_ca_2_nguon & (tong_nhom == 0)
+    keys_khop = set(gop.loc[mask_khop_1doi1, '_CHECK_TRUNG'])
+
+    mask_mo_ho = (so_dong_nhom > 2) & co_ca_2_nguon
+    so_nhom_mo_ho = gop.loc[mask_mo_ho, '_CHECK_TRUNG'].nunique()
+    if so_nhom_mo_ho > 0:
+        _log(f'[B11][Mục 5][WARN] {so_nhom_mo_ho:,} nhóm CHECK_TRÙNG có >2 dòng khi gộp '
+             f'NPO thừa T-2 + huỷ khác ngày T-1 — KHÔNG gắn nhãn (mơ hồ, cần chấm tay).')
+
+    npo_t2['KET_QUA'] = npo_t2['_CHECK_TRUNG'].isin(keys_khop).map({True: HUY_NGAY_T1, False: ''})
+    huy['KET_QUA']    = huy['_CHECK_TRUNG'].isin(keys_khop).map({True: NPO_NGAY_T2, False: ''})
+
+    _log(f'[B11][Mục 5] {len(keys_khop):,} cặp khớp 1-đối-1 (tổng=0) giữa '
+         f'NPO_đi thừa T-2 ({len(npo_t2):,} dòng) và huỷ khác ngày T-1 ({len(huy):,} dòng).')
+
+    npo_t2 = npo_t2.drop(columns=['_CHECK_TRUNG', '_NGUON'])
+    huy    = huy.drop(columns=['_CHECK_TRUNG', '_NGUON'])
+    return npo_t2.reset_index(drop=True), huy.reset_index(drop=True)
+
+
+# ─── Mục 5.1 (bổ sung 14.09.2026) — đối xứng Mục 5 ở trên nhưng nguồn QT đi
+# thừa thay vì NPO_đi thừa ──
+
+_COLS_BAT_BUOC_QT_THUA_T2 = ['CN thực hiện', 'Mã giao dịch', 'SO_TIEN']
+
+
+def doc_qt_di_thua_t2(path: str) -> pd.DataFrame:
+    """Mục 5.1 (14.09.2026) — đọc file QT đi thừa T-2, tính lại _CHECK_TRUNG =
+    mã CN (từ 'CN thực hiện') + SO_TRACE ('Mã giao dịch'.lstrip('0')) — ĐÚNG công
+    thức tach_dien_huy_qt() ở b9_doi_chieu_osb.py."""
+    if path.lower().endswith('.csv'):
+        df = pd.read_csv(path, dtype=str, encoding='utf-8-sig', sep=None, engine='python')
+    else:
+        df = pd.read_excel(path, dtype=str, engine='calamine')
+    df.columns = [c.strip() for c in df.columns]
+    missing = [c for c in _COLS_BAT_BUOC_QT_THUA_T2 if c not in df.columns]
+    if missing:
+        raise ValueError(f'File QT đi thừa T-2 thiếu cột {missing} — có thể bị sửa cấu trúc: {path}')
+
+    df = df.copy()
+    df['SO_TIEN'] = doc_so_tien(df['SO_TIEN'], f'QT đi thừa T-2: {path}', ten_cot='SO_TIEN')
+    ma_cn = df['CN thực hiện'].astype(str).str.strip().str.extract(r'^(\d+)', expand=False)
+    if ma_cn.isna().any():
+        raise ValueError(f"File QT đi thừa T-2 có 'CN thực hiện' sai định dạng '<mã CN> - <tên>': {path}")
+    trace = df['Mã giao dịch'].astype(str).str.strip().str.lstrip('0')
+    df['_CHECK_TRUNG'] = ma_cn + trace
+    return df
+
+
+def doi_chieu_huy_cheo_ngay_qt(df_qt_thua_t2: pd.DataFrame | None,
+                               df_huy_khac_ngay_qt_t1: pd.DataFrame,
+                               log_callback=None):
+    """Mục 5.1 — đối xứng doi_chieu_huy_cheo_ngay() nhưng nguồn QT (cột tiền
+    SO_TIEN thay vì CRAMOUNT). Đổi tên cột tạm để TÁI DÙNG NGUYÊN thuật toán đã
+    có, không viết lại logic khớp.
+
+    LƯU Ý (phát hiện khi rà lại `doi_chieu_huy_cheo_ngay()`, KHÔNG có trong bản
+    mô tả gốc): hàm đó tự tính lại `_CHECK_TRUNG` cho vế "huy" bằng công thức
+    HARDCODE `TRBRCD + SO_TRACE` (cột NPO) — `df_huy_khac_ngay_qt_t1` (đầu ra
+    `tach_dien_huy_qt()` ở b9) không có 2 cột này, chỉ có 'CN thực hiện'/'Mã
+    giao dịch' (cột QT). Phải thêm 2 cột tạm TRBRCD/SO_TRACE cùng công thức
+    trích xuất với `doc_qt_di_thua_t2()`/`tach_dien_huy_qt()` (mã CN + SO_TRACE,
+    không ký tự phân tách) rồi xoá lại sau — nếu không sẽ KeyError('TRBRCD') ngay
+    lần chạy đầu có dữ liệu thật."""
+    if df_qt_thua_t2 is None or len(df_qt_thua_t2) == 0:
+        return df_qt_thua_t2, df_huy_khac_ngay_qt_t1
+
+    qt_t2_tam = df_qt_thua_t2.rename(columns={'SO_TIEN': 'CRAMOUNT'})
+
+    huy_tam = df_huy_khac_ngay_qt_t1.rename(columns={'SO_TIEN': 'CRAMOUNT'}).copy()
+    huy_tam['TRBRCD']   = huy_tam['CN thực hiện'].astype(str).str.strip().str.extract(r'^(\d+)', expand=False)
+    huy_tam['SO_TRACE'] = huy_tam['Mã giao dịch'].astype(str).str.strip().str.lstrip('0')
+
+    ket_qua_qt_t2, ket_qua_huy = doi_chieu_huy_cheo_ngay(qt_t2_tam, huy_tam, log_callback)
+    if ket_qua_qt_t2 is not None:
+        ket_qua_qt_t2 = ket_qua_qt_t2.rename(columns={'CRAMOUNT': 'SO_TIEN'})
+    if ket_qua_huy is not None:
+        ket_qua_huy = ket_qua_huy.drop(columns=['TRBRCD', 'SO_TRACE'], errors='ignore') \
+                                  .rename(columns={'CRAMOUNT': 'SO_TIEN'})
+    return ket_qua_qt_t2, ket_qua_huy
+
+
+# ─── Mục 8 (bổ sung 14.09.2026) — đọc file TO ko đi kênh NGÀY CŨ (người dùng tự
+# nạp thêm, có thể nhiều file/nhiều ngày cùng lúc — xử lý gộp ở pipeline.py) ──
+
+_COLS_BAT_BUOC_TIMEOUT_CU = ['CHI_NHANH', 'TRACE', 'SE_TRACE', 'SO_TIEN', 'NGAY_GIAO_DICH']
+
+
+def doc_timeout_cu(path: str) -> pd.DataFrame:
+    """Đọc 1 file "TO ko đi kênh ngày cũ" — dùng lại NGUYÊN `_doc_file_thua_t2()`
+    (chấp nhận .csv chương trình tự xuất lẫn .xlsx người chấm tự sửa tay, dtype=str,
+    tự dò dấu phân cách CSV, chuẩn hoá SO_TIEN qua `doc_so_tien()`). Không bắt buộc
+    có sẵn KEY_HUB/GHI_CHU — `doi_chieu_timeout_cu()` ở b12_ghi_chu_timeout.py tự
+    tính lại KEY_HUB nếu thiếu (file chương trình tự xuất `TIMEOUT_KHONG_KENH_*.csv`
+    thì luôn có sẵn, không cần tính lại)."""
+    return _doc_file_thua_t2(path, _COLS_BAT_BUOC_TIMEOUT_CU, 'TO ko đi kênh ngày cũ')
