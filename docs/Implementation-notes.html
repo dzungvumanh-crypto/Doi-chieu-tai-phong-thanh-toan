@@ -21260,8 +21260,8 @@ This may happen if you try to create UI from a background task.</pre>
           — test từng hàm rời không bắt được lỗi nối dây, mà đó đúng là kiểu hỏng làm biểu đồ trống trơn.</li>
         <li>Lỗi test bắt được ngay: mẫu ghi trong phút hiện tại (có phần giây) rơi ra ngoài ô cuối → ô người xem nhìn đầu tiên luôn trống.</li>
         <li>Hai lỗi nữa chỉ ảnh chụp mới thấy: 24 nhãn giờ trên ~430 px dính thành vệt "16:07:08:09…" (nay 3 giờ một nhãn); trục mili giây
-          hiện "1,200 ms" — ECharts tự chèn dấu phẩy hàng nghìn và NiceGUI <b>không cho</b> truyền hàm JS để đổi, mà trong tiếng Việt dấu
-          phẩy là dấu thập phân nên đọc thành 1,2 ms → bỏ hẳn nhãn trục dọc của biểu đồ đó, vạch ngưỡng + câu chú dẫn + tooltip đã đủ.</li>
+          hiện "1,200 ms" — ECharts tự chèn dấu phẩy hàng nghìn, mà tiếng Việt dấu phẩy là dấu thập phân nên đọc thành 1,2 ms.
+          <b>Đã sửa lại 25/09</b> — xem card 179: kết luận "NiceGUI không cho truyền hàm JS" ở đây là <b>SAI</b>.</li>
       </ul>
     </div>
   </div>
@@ -22152,6 +22152,44 @@ This may happen if you try to create UI from a background task.</pre>
   <div class="card">
     <div class="card-header">
       <span class="card-num">179</span>
+      <span class="card-title">Giám sát: tắt hoạt ảnh biểu đồ, trả lại trục mili giây — và một kết luận sai của card 168 (2026-09-25)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Đính chính card 168</span> NiceGUI <b>CÓ</b> cho truyền hàm JS vào options ECharts</div>
+      <p>Card 168 kết luận NiceGUI không cho, rồi lấy đó làm lý do <b>bỏ hẳn nhãn trục dọc</b> của biểu đồ mili giây — người dùng phát hiện ngay
+        ("biểu đồ độ phản hồi không có cột dọc?"). Kết luận đó sai: tôi chỉ đọc <code>echart.js</code> ở nhánh <code>run_chart_method</code> rồi suy ra cả
+        phần options. Thực tế <code>update_chart()</code> gọi <code>convertDynamicProperties(this.options, true)</code> — mọi khoá có tiền tố
+        <code>:</code> được đổi thành hàm thật, đệ quy (xem <code>nicegui/static/utils/dynamic_properties.js</code>).</p>
+      <p>Nay: <code>":formatter": "v =&gt; v.toLocaleString('vi-VN') + ' ms'"</code> → <b>1.200 ms</b> (dấu chấm ngăn hàng nghìn, đúng lối viết số Việt Nam).
+        Tooltip dùng <code>":valueFormatter"</code>, thêm được việc mà khuôn <code>{value}</code> không làm nổi: ô không có mẫu hiện <b>"—"</b> thay vì số 0.
+        <b>Bài học:</b> "thư viện không hỗ trợ" là một khẳng định về mã người khác — đọc đúng chỗ rồi hãy thiết kế vòng qua nó, đừng cắt bớt giao diện vì một suy luận.</p>
+
+      <table>
+        <tr><th>Đổi</th><th>Vì sao</th></tr>
+        <tr><td><code>animation: False</code> cho mọi biểu đồ</td>
+          <td>Trang tự làm mới 30 giây/lần và mỗi lượt dựng lại biểu đồ mới → hoạt ảnh mặc định vẽ đường <b>chạy dần từ trái sang phải ~1 giây</b>,
+            cứ nửa phút một lần trên màn hình để mở cả ngày. Người dùng yêu cầu 25/09: hiện nguyên hình cùng lúc</td></tr>
+        <tr><td>Nháy 0,1 s báo "vừa cập nhật", gắn lên <b>phần tử dựng mới mỗi lượt</b></td>
+          <td>Vẫn cần dấu hiệu phân biệt "vừa cập nhật" với "trang đứng hình". Bản đầu đổi qua lại hai lớp CSS trên khung cố định; phản biện chỉ ra
+            trình duyệt nhận diện hoạt ảnh theo <code>animation-name</code> nên hai lớp cùng một <code>@keyframes</code> thì <b>không chạy lại</b>.
+            <b>Không kiểm chứng được điều đó ở đây</b> — Chrome headless đóng băng đồng hồ hoạt ảnh, bốn cách đo đều ra <code>t=0ms</code> cho cả hai
+            phương án. Nên bỏ hẳn lối đó thay vì cãi bằng lý thuyết: <code>_ve()</code> vốn đã dựng lại toàn bộ nội dung mỗi lượt, bọc thêm một phần tử
+            mang lớp <code>gs-nhay</code> là xong — hoạt ảnh của phần tử <b>vừa sinh ra</b> thì luôn chạy</td></tr>
+        <tr><td>Bỏ vạch "ngưỡng 90 %" và "gần đầy"</td>
+          <td>Người dùng chốt 25/09. Hai biểu đồ đó trục cố định 0–100 nên mức cao đọc thẳng được; vạch chỉ thêm một đường đỏ nằm giữa hai đường dữ liệu.
+            Vạch 1000 ms của biểu đồ độ phản hồi <b>giữ lại</b> (trục không có trần cố định, không có vạch thì không biết bao nhiêu là nhiều)</td></tr>
+      </table>
+      <p><code>tests/test_monitor.py</code> canh hai thứ người dùng đã phải nhắc: <code>animation is False</code>, và nhãn trục phải dùng
+        <code>:formatter</code> chứ không phải khuôn <code>{value}</code>. Test "bỏ vạch ngưỡng" đọc <b>tham số thật</b> của từng lời gọi
+        <code>_do_24h</code> bằng AST — bản đầu grep chuỗi cả file, đổi nhãn thành chữ khác là test vẫn xanh (phản biện bắt).</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">180</span>
       <span class="card-title">Chấm ILO1000 — sheet hub thiếu lệnh đã đi kênh ở phiên kế tiếp (22/09: thiếu 12.471 dòng ngày 23/09)</span>
       <span class="badge badge-done">Đã sửa, chạy lại 22.9 + 23.9 nối tiếp — 25/09/2026</span>
     </div>

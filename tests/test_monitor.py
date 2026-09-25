@@ -380,3 +380,38 @@ def test_o_thoi_gian_nam_dung_luoi_10_phut_du_mo_trang_luc_nao(tmp_path, monkeyp
         assert all(int(o["luc"][3:]) % 10 == 0 for o in ls), f"phút {phut}: ô lệch lưới"
         assert sum(1 for o in ls if o["luc"].endswith(":00")) == 24, f"phút {phut}: thiếu mốc giờ tròn"
     db.close()
+
+
+# ── Giao diện biểu đồ (canh hồi quy, không cần trình duyệt) ──
+def test_bieu_do_khong_co_hoat_anh_va_nhan_truc_dung_loi_viet_so_VN():
+    """Hai thứ người dùng đã phải nhắc — đừng để ai vô tình bật lại.
+
+    1. Hoạt ảnh ECharts vẽ đường chạy từ trái sang phải mỗi lượt làm mới 30 giây.
+    2. Nhãn trục mặc định ra "1,200 ms" — tiếng Việt đọc phẩy là dấu thập phân → 1,2 ms.
+    """
+    from frontend.pages import monitor as m
+
+    assert m._khung_do(100)["animation"] is False
+
+    nhan = m._truc_so(" ms")["axisLabel"]
+    assert "formatter" not in nhan, "khuôn {value} của ECharts tự chèn dấu phẩy hàng nghìn"
+    assert nhan[":formatter"].startswith("v => v.toLocaleString('vi-VN')")
+
+
+def test_hai_bieu_do_phan_tram_khong_con_vach_nguong():
+    """Người dùng chốt 25/09: bỏ vạch "ngưỡng 90 %" và "gần đầy", giữ vạch 1000 ms.
+
+    Đọc THAM SỐ của từng lời gọi `_do_24h` chứ không grep chuỗi cả file: grep thì đổi
+    nhãn thành "mức cao" là test vẫn xanh, còn viết chữ "gần đầy" trong một chú thích
+    là test đỏ oan.
+    """
+    import ast
+    import inspect
+    from frontend.pages import monitor as m
+
+    goi = [n for n in ast.walk(ast.parse(inspect.getsource(m._ve_lich_su)))
+           if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_do_24h"]
+    assert len(goi) == 3, "ba biểu đồ 24 giờ"
+    vach = [n.args[4] for n in goi]                       # tham số `vach`
+    assert [isinstance(v, ast.Constant) and v.value is None for v in vach[:2]] == [True, True],         "hai biểu đồ phần trăm không còn vạch ngưỡng"
+    assert isinstance(vach[2], ast.Tuple) and vach[2].elts[0].value == 1000,         "biểu đồ mili giây vẫn giữ vạch 1000 ms"

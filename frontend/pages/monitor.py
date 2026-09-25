@@ -42,6 +42,18 @@ _TONG_THE = {
     "loi":      ("error",        "Có sự cố cần xử lý",             _LOI),
 }
 
+# Nháy 0,1 giây báo "số liệu vừa thay" — thay cho hoạt ảnh vẽ dần của ECharts (xem `_khung_do`).
+#
+# Lớp này gắn lên một phần tử **dựng mới ở mỗi lượt vẽ**, không phải lên khung cố định.
+# Lý do: gắn/gỡ lớp trên một phần tử có sẵn thì việc hoạt ảnh có chạy lại hay không phụ
+# thuộc `animation-name` có đổi hay không — một chi tiết tinh vi của CSS mà tôi KHÔNG kiểm
+# chứng được ở đây (Chrome headless đóng băng đồng hồ hoạt ảnh, mọi phép đo đều ra t=0).
+# Phần tử mới thì không có chỗ cho tranh cãi đó: hoạt ảnh của một phần tử vừa sinh ra luôn chạy.
+_CSS_NHAY = """<style>
+@keyframes gs-nhay { 0% { opacity: .35 } 100% { opacity: 1 } }
+.gs-nhay { animation: gs-nhay .1s ease-out }
+</style>"""
+
 
 # ── Định dạng ──
 def _dung_luong(b) -> str:
@@ -122,8 +134,16 @@ def _thanh_muc(ti_le: float, nhan: str, goi_y: str = ""):
 
 # ── Khuôn biểu đồ (ECharts) ──
 def _khung_do(cao: int) -> dict:
-    """Phần chung: nền trong suốt, trục/lưới lùi về sau, chữ theo mực của nền tối."""
+    """Phần chung: nền trong suốt, trục/lưới lùi về sau, chữ theo mực của nền tối.
+
+    `animation: False` — trang tự làm mới mỗi 30 giây và mỗi lượt dựng lại biểu đồ mới,
+    nên hoạt ảnh mặc định của ECharts vẽ đường **chạy dần từ trái sang phải ~1 giây**,
+    cứ nửa phút một lần. Với màn hình để mở cả ngày thì đó là thứ liên tục kéo mắt về
+    phía nó mà không mang thêm thông tin gì. Nay biểu đồ hiện ra nguyên hình cùng lúc;
+    dấu hiệu "vừa cập nhật" là cú nháy 0,1 giây của cả khối (xem `_CSS_NHAY`).
+    """
     return {
+        "animation": False,
         "backgroundColor": "transparent",
         "textStyle": {"color": _MUC2, "fontSize": 11},
         "grid": {"left": 4, "right": 8, "top": 8, "bottom": 4, "containLabel": True},
@@ -144,8 +164,16 @@ def _truc_gio(nhan: list[str]) -> dict:
 
 
 def _truc_so(don_vi: str = "") -> dict:
+    """Trục số, nhãn ghi theo lối viết số Việt Nam (dấu CHẤM ngăn hàng nghìn).
+
+    Khuôn `"{value} ms"` của ECharts ra "1,200 ms" — ECharts tự chèn dấu PHẨY hàng nghìn,
+    mà tiếng Việt dùng phẩy làm dấu thập phân nên đọc thành 1,2 ms, sai 1000 lần. NiceGUI
+    CÓ cho truyền hàm JS vào options: khoá tiền tố `:` được `convertDynamicProperties()`
+    đổi thành hàm thật (xem nicegui/static/utils/dynamic_properties.js).
+    """
     return {"type": "value", "minInterval": 1,
-            "axisLabel": {"color": _MO, "fontSize": 10, "formatter": f"{{value}}{don_vi}"},
+            "axisLabel": {"color": _MO, "fontSize": 10,
+                          ":formatter": f"v => v.toLocaleString('vi-VN') + '{don_vi}'"},
             "splitLine": {"lineStyle": {"color": _LUOI}}}
 
 
@@ -169,7 +197,9 @@ def _chu_thich(ten: list[str]) -> dict:
 # ── Các thẻ ──
 def _ve(khung, d: dict):
     khung.clear()
-    with khung:
+    # Toàn bộ nội dung nằm trong MỘT phần tử dựng mới mỗi lượt — nhờ vậy lớp `gs-nhay`
+    # luôn chạy (phần tử mới sinh), báo "số liệu vừa thay" thay cho hoạt ảnh của ECharts
+    with khung, ui.column().classes("w-full gap-4 gs-nhay"):
         icon, tieu_de, mau = _TONG_THE.get(d.get("tong_the"), _TONG_THE["canh_bao"])
         with ui.column().classes("w-full rounded-xl px-4 py-3 gap-1").style(
                 f"background:{_THE}; border:1px solid {mau}; border-left:4px solid {mau}"):
@@ -246,20 +276,19 @@ def _truc_luc(ls: list) -> dict:
 
 
 def _do_24h(ls: list, chuoi: list, don_vi: str, tran: "float | None", vach: "tuple | None",
-            an_nhan_y: bool = False, cao: int = 170):
+            cao: int = 170):
     if vach:
         chuoi[0]["markLine"] = _vach_nguong(*vach)
     opt = _khung_do(cao)
     opt.update({
         "grid": {"left": 4, "right": 12, "top": 10, "bottom": 40, "containLabel": True},
         "tooltip": {"trigger": "axis", "backgroundColor": _THE, "borderColor": _VIEN,
-                    "textStyle": {"color": _MUC1, "fontSize": 11}},
+                    "textStyle": {"color": _MUC1, "fontSize": 11},
+                    # Ô không có mẫu (backend lúc ấy không chạy) hiện "—" chứ không phải "-"
+                    # hay số 0: tooltip là chỗ duy nhất nói được "quãng này không có dữ liệu"
+                    ":valueFormatter": f"v => v == null ? '—' : v.toLocaleString('vi-VN') + '{don_vi}'"},
         "xAxis": _truc_luc(ls),
-        # ECharts tự chèn dấu PHẨY hàng nghìn ("1,200 ms") mà không cho thay bằng hàm
-        # JS qua NiceGUI — trong tiếng Việt dấu phẩy là dấu thập phân nên đọc thành 1,2 ms.
-        # Với trục mili giây thì bỏ hẳn nhãn: vạch ngưỡng + câu chú dẫn + tooltip đã nói đủ.
-        "yAxis": {**_truc_so(don_vi), **({"max": tran} if tran else {}),
-                  **({"axisLabel": {"show": False}} if an_nhan_y else {})},
+        "yAxis": {**_truc_so(don_vi), **({"max": tran} if tran else {})},
         "series": chuoi,
     })
     # Từ 2 chuỗi trở lên mới cần chú thích; một chuỗi thì tiêu đề thẻ đã gọi tên nó
@@ -294,7 +323,7 @@ def _ve_lich_su(d: dict):
                      f"Mỗi điểm là mức CAO NHẤT trong {buoc} phút.")
             _do_24h(ls, [_duong("CPU", _S1, [o["cpu"] for o in ls]),
                          _duong("RAM", _S2, [o["ram_pct"] for o in ls])],
-                    " %", 100, (90, "ngưỡng 90 %"))
+                    " %", 100, None)
 
         # 2) Ba bể tài nguyên quy về % SỨC CHỨA của chính nó — nhờ vậy chung được một trục
         with _the("Mức dùng bể tài nguyên — 24 giờ", "speed"):
@@ -303,14 +332,14 @@ def _ve_lich_su(d: dict):
             _do_24h(ls, [_duong("Luồng xử lý", _S1, [o["luong_pct"] for o in ls]),
                          _duong("Kết nối CSDL", _S2, [o["csdl_pct"] for o in ls]),
                          _duong("Việc nặng", _S3, [o["nang_pct"] for o in ls])],
-                    " %", 100, (90, "gần đầy"))
+                    " %", 100, None)
 
         # 3) Độ phản hồi: ms — đơn vị khác hẳn nên PHẢI là biểu đồ riêng
         with _the("Độ phản hồi của backend — 24 giờ", "timer"):
             _chu_dan(f"Lần đứng lâu nhất trong mỗi {buoc} phút. Cao nhất 24 giờ qua: "
                      f"{_so(dinh('loop_ms'))} ms. Dưới 100 ms là bình thường.")
             _do_24h(ls, [_duong("Đứng lâu nhất", _S1, [o["loop_ms"] for o in ls])],
-                    " ms", None, (1000, "ngưỡng 1000 ms"), an_nhan_y=True)
+                    " ms", None, (1000, "ngưỡng 1000 ms"))
 
 
 def _chu_dan(chu: str):
@@ -570,6 +599,7 @@ async def monitor_page():
     vung = _content_area()
     vung.classes(remove="bg-gray-50")
     vung.style(f"background:{_NEN}")
+    ui.add_head_html(_CSS_NHAY, shared=True)
     with vung:
         with ui.column().classes("mb-4 gap-1"):
             ui.label("Giám sát hệ thống").classes("text-2xl font-bold").style(f"color:{_MUC1}")

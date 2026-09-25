@@ -96,7 +96,7 @@ def _hub_carryover_days(
     batch_days: 'set[int] | None' = None,
 ) -> set[int]:
     """Cửa sổ Hub đầy đủ = `_osb_carryover_days()` (T + về trước) CỘNG cửa sổ
-    tới. Cửa sổ tới = HỢP của 2 phần (card 179):
+    tới. Cửa sổ tới = HỢP của 2 phần (card 180):
     (1) `batch_days` nếu có → `_citad_forward_days()`, RỘNG BẰNG ĐÚNG cửa sổ Citad
         (Q7, chốt 2026-09-23, hệ quả BẮT BUỘC của Q1 → (b)) — nếu không, dòng Citad
         ở ngày xa hơn trong cửa sổ sẽ có Trace rỗng → khoá `Map dc` cụt → khớp nhầm;
@@ -282,7 +282,7 @@ def _run_one_day(
     # không, dòng Citad ở ngày xa hơn sẽ có Trace rỗng (không tra được qua
     # Hub/EICP) → khoá Map dc cụt → khớp nhầm. batch_days=None (chưa biết
     # batch) → cửa sổ Citad chỉ có đúng ngày này. Riêng Hub luôn cộng thêm phiên
-    # kế tiếp dù batch có hay không (card 179, xem `_hub_carryover_days()`).
+    # kế tiếp dù batch có hay không (card 180, xem `_hub_carryover_days()`).
     citad_window = _citad_forward_days(ngay_int, batch_days if batch_days is not None else {ngay_int})
 
     # ── Load song song (I/O bound) — Core đã nạp sẵn từ main_from_dir() ──
