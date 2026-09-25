@@ -399,10 +399,19 @@ def test_bieu_do_khong_co_hoat_anh_va_nhan_truc_dung_loi_viet_so_VN():
 
 
 def test_hai_bieu_do_phan_tram_khong_con_vach_nguong():
-    """Người dùng chốt 25/09: bỏ vạch "ngưỡng 90 %" và "gần đầy"."""
-    from pathlib import Path
+    """Người dùng chốt 25/09: bỏ vạch "ngưỡng 90 %" và "gần đầy", giữ vạch 1000 ms.
 
-    ma = Path(__file__).resolve().parent.parent / "frontend" / "pages" / "monitor.py"
-    noi_dung = ma.read_text(encoding="utf-8")
-    assert "ngưỡng 90" not in noi_dung and "gần đầy" not in noi_dung
-    assert "ngưỡng 1000 ms" in noi_dung, "vạch mốc của biểu đồ mili giây vẫn giữ"
+    Đọc THAM SỐ của từng lời gọi `_do_24h` chứ không grep chuỗi cả file: grep thì đổi
+    nhãn thành "mức cao" là test vẫn xanh, còn viết chữ "gần đầy" trong một chú thích
+    là test đỏ oan.
+    """
+    import ast
+    import inspect
+    from frontend.pages import monitor as m
+
+    goi = [n for n in ast.walk(ast.parse(inspect.getsource(m._ve_lich_su)))
+           if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_do_24h"]
+    assert len(goi) == 3, "ba biểu đồ 24 giờ"
+    vach = [n.args[4] for n in goi]                       # tham số `vach`
+    assert [isinstance(v, ast.Constant) and v.value is None for v in vach[:2]] == [True, True],         "hai biểu đồ phần trăm không còn vạch ngưỡng"
+    assert isinstance(vach[2], ast.Tuple) and vach[2].elts[0].value == 1000,         "biểu đồ mili giây vẫn giữ vạch 1000 ms"

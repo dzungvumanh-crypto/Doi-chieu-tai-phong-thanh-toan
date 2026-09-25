@@ -43,12 +43,15 @@ _TONG_THE = {
 }
 
 # Nháy 0,1 giây báo "số liệu vừa thay" — thay cho hoạt ảnh vẽ dần của ECharts (xem `_khung_do`).
-# Hai tên lớp giống hệt nhau về hiệu ứng: đổi qua lại giữa hai lớp mới khởi động lại được
-# animation của CSS; gắn lại đúng một lớp cũ thì trình duyệt coi như không có gì đổi và không nháy.
+#
+# Lớp này gắn lên một phần tử **dựng mới ở mỗi lượt vẽ**, không phải lên khung cố định.
+# Lý do: gắn/gỡ lớp trên một phần tử có sẵn thì việc hoạt ảnh có chạy lại hay không phụ
+# thuộc `animation-name` có đổi hay không — một chi tiết tinh vi của CSS mà tôi KHÔNG kiểm
+# chứng được ở đây (Chrome headless đóng băng đồng hồ hoạt ảnh, mọi phép đo đều ra t=0).
+# Phần tử mới thì không có chỗ cho tranh cãi đó: hoạt ảnh của một phần tử vừa sinh ra luôn chạy.
 _CSS_NHAY = """<style>
 @keyframes gs-nhay { 0% { opacity: .35 } 100% { opacity: 1 } }
-.gs-nhay-a { animation: gs-nhay .1s ease-out }
-.gs-nhay-b { animation: gs-nhay .1s ease-out }
+.gs-nhay { animation: gs-nhay .1s ease-out }
 </style>"""
 
 
@@ -194,7 +197,9 @@ def _chu_thich(ten: list[str]) -> dict:
 # ── Các thẻ ──
 def _ve(khung, d: dict):
     khung.clear()
-    with khung:
+    # Toàn bộ nội dung nằm trong MỘT phần tử dựng mới mỗi lượt — nhờ vậy lớp `gs-nhay`
+    # luôn chạy (phần tử mới sinh), báo "số liệu vừa thay" thay cho hoạt ảnh của ECharts
+    with khung, ui.column().classes("w-full gap-4 gs-nhay"):
         icon, tieu_de, mau = _TONG_THE.get(d.get("tong_the"), _TONG_THE["canh_bao"])
         with ui.column().classes("w-full rounded-xl px-4 py-3 gap-1").style(
                 f"background:{_THE}; border:1px solid {mau}; border-left:4px solid {mau}"):
@@ -220,17 +225,6 @@ def _ve(khung, d: dict):
             _ve_nguoi_dung(d["nguoi_dung"])
             _ve_doi_chieu(d["tai"] or {})
         _ve_nhat_ky(d["nhat_ky"])
-
-
-def _nhay(khung, lan_ve: list):
-    """Nháy cả khối 0,1 giây để báo "số liệu vừa thay".
-
-    Đổi qua lại giữa hai lớp CSS giống hệt nhau: gắn lại đúng lớp cũ thì trình duyệt
-    thấy thuộc tính không đổi và KHÔNG chạy lại animation — nháy một lần rồi thôi.
-    """
-    lan_ve[0] += 1
-    cu, moi = ("gs-nhay-b", "gs-nhay-a") if lan_ve[0] % 2 else ("gs-nhay-a", "gs-nhay-b")
-    khung.classes(remove=cu, add=moi)
 
 
 def _ve_loi(khung, e: Exception):
@@ -605,7 +599,7 @@ async def monitor_page():
     vung = _content_area()
     vung.classes(remove="bg-gray-50")
     vung.style(f"background:{_NEN}")
-    ui.add_head_html(_CSS_NHAY)
+    ui.add_head_html(_CSS_NHAY, shared=True)
     with vung:
         with ui.column().classes("mb-4 gap-1"):
             ui.label("Giám sát hệ thống").classes("text-2xl font-bold").style(f"color:{_MUC1}")
@@ -622,7 +616,6 @@ async def monitor_page():
         khung = ui.column().classes("w-full gap-4")
 
         dang_tai = [False]
-        lan_ve = [0]
 
         async def _tai():
             if dang_tai[0]:
@@ -641,7 +634,6 @@ async def monitor_page():
             finally:
                 dang_tai[0] = False
             _ve(khung, d)
-            _nhay(khung, lan_ve)
             luc_lbl.set_text(f"Cập nhật lúc {(d.get('luc') or '')[11:19]}")
 
         nut.on_click(_tai)
