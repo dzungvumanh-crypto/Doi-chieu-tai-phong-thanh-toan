@@ -19,7 +19,7 @@ def test_job_xong_gom_du_file_xlsx(monkeypatch, tmp_path):
     monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
 
     # ── Pipeline giả: ghi 2 file kết quả + 1 file rác, trả đường dẫn như bản thật ──
-    def _gia_lap(input_dir, output_dir, log_callback, cancel_event):
+    def _gia_lap(input_dir, output_dir, log_callback, cancel_event, db_path):
         out = Path(output_dir)
         (out / 'b_ket_qua.xlsx').write_bytes(b'x')
         (out / 'a_ket_qua.xlsx').write_bytes(b'x')

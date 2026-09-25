@@ -64,6 +64,14 @@ def load_hub(paths: list[Path] | Path, ngay_ints: int | set[int] | None = None) 
             ngay_ints = {ngay_ints}
         parsed = pd.to_datetime(df[HUB_COL_NGAY_GIO], dayfirst=True, errors='coerce')
         ngay_full = parsed.dt.year * 10000 + parsed.dt.month * 100 + parsed.dt.day
-        df = df[ngay_full.isin(ngay_ints)].copy()
+        # Dòng 'Ngày giờ kênh trả' RỖNG (lệnh chưa từng đi kênh — VD còn đang
+        # chờ duyệt chi, "Trạng thái"='Chờ duyệt chi trả'/'HT lỗi'/'Đã hủy'...)
+        # KHÔNG BAO GIỜ khớp bất kỳ `ngay_ints` nào (`parsed` là NaT) — bị lọc
+        # mất VĨNH VIỄN dù mở cửa sổ rộng tới đâu, vì chúng không có ngày để
+        # so sánh, không phải vì ngày của chúng nằm ngoài cửa sổ. Xác nhận
+        # thật 09/09/2026: 962 dòng thuộc loại này trong 129.858 dòng Hub —
+        # đúng bằng phần chênh lệch còn lại sau khi đã mở cửa sổ T+1 (xem
+        # `_hub_carryover_days()`). Luôn GIỮ các dòng này bất kể cửa sổ.
+        df = df[ngay_full.isin(ngay_ints) | parsed.isna()].copy()
 
     return df.reset_index(drop=True)

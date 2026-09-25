@@ -1,11 +1,19 @@
 """Logic đối chiếu ILO1000: tính Trace, Map dc, phát hiện Hủy, điền TT."""
 
+import logging
+from typing import Callable
+
 import pandas as pd
+
+from backend.services.ach.so_tien import LoiDinhDangSoTien, doc_so_tien
 
 from .config import (
     HUB_COL_SO_GD, HUB_COL_STC, HUB_COL_TRACE, HUB_COL_TRACE2_RAW,
     HUB_COL_TRANG_THAI, HUB_COL_NGAY_GIO, HUB_COL_NOI_DUNG, HUB_COL_SO_TIEN,
+    HUB_COL_CHI_NHANH,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_str(s) -> pd.Series:
@@ -18,6 +26,82 @@ def _first_match(keys: pd.Series, values: pd.Series) -> dict:
     return dict(zip(keys[mask], values[mask]))
 
 
+def _first_match_unique(keys: pd.Series, values: pd.Series) -> dict:
+    """PLAN_B3 — khác `_first_match()`: khoá xuất hiện ≥2 LẦN bị LOẠI HẲN
+    (không đoán đại "dòng đầu"), chỉ giữ khoá xác định được ĐÚNG 1 dòng.
+    Dùng cho khoá phụ (Trace, Số tiền[, Chi nhánh]) của nhóm Trace trùng —
+    "lọc Số tiền" phải biết CÒN LẠI BAO NHIÊU ứng viên để quyết định đi tiếp
+    xuống khoá chi nhánh hay dừng ở Q3 (PLAN_B3 mục 3.3); `_first_match()`
+    (giữ dòng đầu vô điều kiện) sẽ khớp "trúng" ngay ở bước Số tiền dù vẫn
+    còn ≥2 ứng viên cùng số tiền khác chi nhánh — sai với đúng ý đồ nghiệp
+    vụ "lọc Số tiền trước, KHÔNG giải được thì mới xét chi nhánh"."""
+    nonblank = keys.astype(bool)
+    counts = keys[nonblank].value_counts()
+    unique_keys = set(counts[counts == 1].index)
+    mask = nonblank & keys.isin(unique_keys)
+    return dict(zip(keys[mask], values[mask]))
+
+
+def _trace_trung(trace_col: pd.Series) -> set:
+    """Tập giá trị Trace (Hub) xuất hiện ≥2 lần — Trace rỗng KHÔNG tính là
+    trùng (PLAN_B3 mục 4/B2)."""
+    s = trace_col.fillna('').astype(str)
+    nonblank = s != ''
+    dup = nonblank & s.duplicated(keep=False)
+    return set(s[dup])
+
+
+# ── Thiếu nguồn — "chưa đối chiếu" khác "đã kiểm mà không khớp" ──────────────
+# PLAN_chua_doi_chieu.md — dùng chung cho 4 nguồn: pool Core thừa, pool OSB
+# thừa, OSB hôm nay, Hub. Gom 3 kiểu hỏng: không có file / có file nhưng đọc
+# ra 0 dòng / thiếu cột khoá cần để dựng khoá tra (Map dc, STC...).
+
+def kiem_nguon(
+    ten: str,
+    paths: list,
+    df: 'pd.DataFrame | None',
+    cot_khoa: list[str],
+) -> 'str | None':
+    """Trả về câu ghi chú mô tả lý do `ten` bị thiếu, hoặc None nếu nguồn hợp
+    lệ. Hàm THUẦN — không log, caller tự quyết log WARNING nếu cần.
+
+    LƯU Ý (Hub, xem PLAN mục 0/B1): `df` truyền vào phải là dữ liệu đã đọc để
+    biết THẬT SỰ có dòng nào không — không truyền thẳng bản đã lọc theo cửa sổ
+    ngày nếu cửa sổ hẹp là hành vi BÌNH THƯỜNG (VD `_hub_carryover_days()`),
+    kẻo nhầm "cửa sổ hẹp" thành "thiếu nguồn". Caller (pipeline.py) tự chọn
+    `df` phù hợp cho từng nguồn."""
+    if not paths:
+        return f'{ten}: không có file trong dữ liệu vào'
+    if df is None or df.empty:
+        return f'{ten}: có file nhưng đọc ra 0 dòng'
+    thieu_cot = [c for c in cot_khoa if c not in df.columns]
+    if thieu_cot:
+        return f"{ten}: thiếu cột {', '.join(thieu_cot)}"
+    return None
+
+
+def ghi_chu_thieu_nguon(
+    tt: pd.Series,
+    nguon_thieu_moi_dong: 'list[str] | None' = None,
+    nguon_thieu_tt_rong: 'list[str] | None' = None,
+) -> pd.Series:
+    """Cột 'Ghi chú đối chiếu' cho sheet citad/core.
+
+    `nguon_thieu_moi_dong`: lý do áp cho MỌI DÒNG kể cả dòng đã có TT (Q-A —
+    dùng cho Hub: thiếu Hub làm SAI khoá hệ thống, dòng "đã khớp" cũng có thể
+    khớp SAI, không có dấu hiệu gì khác trên chính dòng đó để phân biệt).
+    `nguon_thieu_tt_rong`: lý do CHỈ áp cho dòng TT RỖNG — thiết kế gốc cho
+    pool Core thừa/pool OSB thừa/OSB hôm nay, KHÔNG đổi."""
+    ld_moi_dong = '; '.join(x for x in (nguon_thieu_moi_dong or []) if x)
+    ld_tt_rong  = '; '.join(x for x in (nguon_thieu_tt_rong or []) if x)
+
+    note = pd.Series(ld_moi_dong, index=tt.index, dtype=object)
+    if ld_tt_rong:
+        empty_mask = tt.isna() | (tt.astype(str).str.strip() == '')
+        note.loc[empty_mask] = f'{ld_moi_dong}; {ld_tt_rong}' if ld_moi_dong else ld_tt_rong
+    return note
+
+
 # ── HUB ──────────────────────────────────────────────────────────────────────
 
 def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[pd.DataFrame, dict]:
@@ -27,12 +111,14 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
         'stc_to_trace':    {STC → Trace text}  ← để citad dùng
         'trace_trangthai': {Trace text → Trạng thái}
         'trace_sotien':    {Trace text → Số tiền}
+        'trace_trung':     {'keys', 'theo_tien', 'theo_tien_cn', 'ung_vien'} — xem PLAN_B3
     }
     """
     df = hub_df.copy()
 
     if df.empty:
         empty_dicts = {k: {} for k in ('stc_to_trace', 'trace_trangthai', 'trace_sotien')}
+        empty_dicts['trace_trung'] = {'keys': set(), 'theo_tien': {}, 'theo_tien_cn': {}, 'ung_vien': {}}
         return df, empty_dicts
 
     hub_to_core: dict = eicp_maps.get('hub_to_core', {})
@@ -47,8 +133,17 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     noi_dung = _safe_str(df[HUB_COL_NOI_DUNG])
     s_mask = so_gd.str.contains('S', case=False, na=False)
     bfx_mask = noi_dung.str.contains('BFX', case=False, na=False)
-    # "Số giao dịch" chứa 'SMF' → luôn giữ nguyên Số Trace 1 gốc, không VLOOKUP
-    # qua EICP dù thuộc nhóm 'S' không BFX (xác nhận từ người dùng 2026-07-16).
+    # "Số giao dịch" chứa 'SMF' → không qua BFX/EICP (EICP xác nhận không có
+    # entry nào cho SMF — build_eicp_maps() không tạo map_hub nào chứa 'SMF',
+    # tra lúc nào cũng rỗng). Trước đây giữ nguyên Số Trace 1 (xác nhận từ
+    # người dùng 2026-07-16) — SỬA 2026-09-07: dữ liệu thật batch 29/8-3/9
+    # (người chấm Việt phát hiện) cho thấy rule đó SAI. Đối chiếu trực tiếp
+    # pHub gốc cho 1 dòng SMF: Core REFERENCE "1000API200192551" nhưng Số
+    # Trace 1 = "209326125" (không khớp gì), Số Trace 2 = "200192551" (khớp
+    # đúng). Verify toàn batch: đổi SMF sang dùng Trace 2 giải quyết đúng
+    # 155/156 dòng "chưa khớp" còn lại (130 → Hoàn thành, 25 → Chờ đi kênh),
+    # không tạo lệch mới, không đổi số dòng khớp Citad. SMF giờ xử lý giống
+    # nhóm không chứa 'S' — dùng thẳng Số Trace 2, không qua BFX/EICP.
     smf_mask = so_gd.str.contains('SMF', case=False, na=False)
 
     # Giá trị Trace ban đầu (Số Trace 1, từ pHub)
@@ -56,7 +151,7 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
 
     if HUB_COL_TRACE2_RAW in df.columns:
         trace2_raw = _safe_str(df[HUB_COL_TRACE2_RAW])
-        use_trace2 = ~s_mask & (trace2_raw != '')
+        use_trace2 = (~s_mask | smf_mask) & (trace2_raw != '')
         trace.loc[use_trace2] = trace2_raw.loc[use_trace2]
 
     # BFX (chỉ trong nhóm "Số giao dịch" chứa 'S'): right(nội dung, 16)
@@ -106,19 +201,103 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     trace_trangthai = _first_match(trace_col, tt_col)
     trace_sotien    = _first_match(trace_col, sotien_col)
 
+    # ── PLAN_B3 (2026-09-23): khoá phụ Số tiền / mã chi nhánh phát lệnh —
+    # CHỈ cho các dòng Hub có Trace xuất hiện ≥2 lần (batch thật 29/8-3/9:
+    # 132.401 dòng Hub, chỉ 38 nhóm/76 dòng rơi vào đây — B0 đã xác nhận).
+    # 3 dict ở trên GIỮ NGUYÊN, không đụng — đây chỉ là dữ liệu THÊM.
+    dup_traces = _trace_trung(trace_col)
+    theo_tien: dict = {}
+    theo_tien_cn: dict = {}
+    ung_vien: dict = {}
+    if dup_traces:
+        sub_mask = trace_col.isin(dup_traces)
+        sub_trace = trace_col.loc[sub_mask]
+        sub_tt    = tt_col.loc[sub_mask]
+        sub_sotien_text = sotien_col.loc[sub_mask]
+        sub_cn = _safe_str(
+            df.get(HUB_COL_CHI_NHANH, pd.Series('', index=df.index))
+        ).loc[sub_mask]
+
+        # `ung_vien` (chỉ để LOG khi Q3/Q4 xảy ra ở process_core(), không
+        # dùng để khớp) KHÔNG phụ thuộc việc parse Số tiền có thành công hay
+        # không — điền cho TOÀN BỘ nhóm trùng trước.
+        for tr, ttv, sv, cn in zip(sub_trace, sub_tt, sub_sotien_text, sub_cn):
+            ung_vien.setdefault(tr, []).append((ttv, sv, cn))
+
+        # PLAN mục 3.1: "bỏ bước lọc theo Số tiền cho NHÓM ĐÓ" (số ít) — gọi
+        # doc_so_tien() TỪNG NHÓM TRACE RIÊNG (KHÔNG gộp cả 38 nhóm vào 1 lời
+        # gọi) để 1 dòng Số tiền sai định dạng chỉ làm mất khoá phụ của ĐÚNG
+        # nhóm chứa dòng đó, không lan sang các nhóm sạch còn lại. Sửa theo
+        # phản biện B10 (2026-09-24) — bản đầu gọi 1 lần trên cả 76 dòng/38
+        # nhóm gộp, 1 dòng lỗi tắt khoá phụ của TOÀN BỘ 38 nhóm, rộng hơn ý
+        # PLAN. Quy mô vòng lặp = số Trace trùng (vài chục), không phải tổng
+        # số dòng Hub — chấp nhận được (skill bank-reconciliation).
+        for tr in dup_traces:
+            idx_tr = sub_trace.index[sub_trace == tr]
+            try:
+                sotien_int_tr = doc_so_tien(
+                    df.loc[idx_tr, HUB_COL_SO_TIEN], f'pHub (nhóm Trace trùng {tr!r})',
+                )
+            except LoiDinhDangSoTien as e:
+                logger.error(
+                    'Nhóm Trace trùng %r có Số tiền pHub không đúng định dạng — '
+                    'bỏ khoá phụ Số tiền/chi nhánh CHỈ CHO NHÓM NÀY (%d nhóm '
+                    'khác vẫn dùng được khoá phụ bình thường), process_core() '
+                    'giữ hành vi cũ (_first_match, dòng đầu theo thứ tự file) '
+                    'cho các dòng của nhóm này: %s', tr, len(dup_traces) - 1, e,
+                )
+                continue
+
+            val_tr  = pd.Series(
+                list(zip(sub_tt.loc[idx_tr], sub_sotien_text.loc[idx_tr])), index=idx_tr,
+            )
+            key1_tr = pd.Series(list(zip(sub_trace.loc[idx_tr], sotien_int_tr)), index=idx_tr)
+            key2_tr = pd.Series(
+                list(zip(sub_trace.loc[idx_tr], sotien_int_tr, sub_cn.loc[idx_tr])), index=idx_tr,
+            )
+            # `_first_match_unique()` — KHÁC 3 dict cũ (không giữ đại "dòng
+            # đầu" khi khoá ghép vẫn còn ≥2 ứng viên trùng nhau) — xem lý do
+            # ở docstring hàm đó. Bước lọc Số tiền phải THẤY được là còn ≥2
+            # ứng viên để nhường cho bước lọc chi nhánh, không "khớp nhầm"
+            # ngay ở bước đầu. Áp dụng TRONG PHẠM VI 1 nhóm Trace — khoá ghép
+            # chỉ có thể trùng giữa các dòng CÙNG Trace nên không khác gì áp
+            # dụng trên toàn bộ 38 nhóm gộp lại, chỉ khác ở phạm vi lỗi.
+            theo_tien.update(_first_match_unique(key1_tr, val_tr))
+            theo_tien_cn.update(_first_match_unique(key2_tr, val_tr))
+
     lookups = {
         'stc_to_trace':    stc_to_trace,
         'trace_trangthai': trace_trangthai,
         'trace_sotien':    trace_sotien,
+        'trace_trung': {
+            'keys':         dup_traces,
+            'theo_tien':    theo_tien,
+            'theo_tien_cn': theo_tien_cn,
+            'ung_vien':     ung_vien,
+        },
     }
     return df, lookups
 
 
 # ── CITAD ─────────────────────────────────────────────────────────────────────
 
-def process_citad(citad_df: pd.DataFrame, hub_lookups: dict, ngay_int: int) -> tuple[pd.DataFrame, dict]:
+def process_citad(
+    citad_df: pd.DataFrame,
+    hub_lookups: dict,
+    ngay_int: int,
+    log: 'Callable[[str], None] | None' = None,
+) -> tuple[pd.DataFrame, dict]:
     """
     Trả về (citad_df đã xử lý, citad_mapdc_to_ngay dict).
+
+    `citad_mapdc_to_ngay` gán nhãn theo TRX_DATE CỦA TỪNG DÒNG (PLAN_B1 mục
+    3/8 Q4 — mặc định, chốt 2026-09-23), không còn 1 nhãn chung cho cả
+    `citad_df`: khi cửa sổ nạp Citad mở rộng sang phiên sau
+    (`pipeline._citad_forward_days()`), 1 dòng Citad TRX_DATE=08/09 khớp Core
+    TRX_DATE=07/09 phải mang đúng nhãn "citad 8.9" — ngày Citad THẬT của
+    chính dòng đó — không phải "citad 7.9" (ngày báo cáo T). Dòng thiếu/lỗi
+    TRX_DATE rơi về nhãn theo `ngay_int` như cũ (tương thích test gọi thẳng
+    hàm này + file Citad thiếu cột).
     """
     df = citad_df.copy()
 
@@ -145,14 +324,44 @@ def process_citad(citad_df: pd.DataFrame, hub_lookups: dict, ngay_int: int) -> t
 
     df['Ngày'] = ngay_int
 
-    # Label TT cho citad match: 'citad {day}.{month}' — khớp format thủ công
-    day   = ngay_int % 100
-    month = (ngay_int // 100) % 100
-    citad_label = f'citad {day}.{month}'
+    # Label TT theo TRX_DATE TỪNG DÒNG — 'citad {day}.{month}'; dòng thiếu/lỗi
+    # TRX_DATE (không đúng 8 chữ số) rơi về nhãn theo ngay_int (ngày báo cáo).
+    fallback_label = f'citad {ngay_int % 100}.{(ngay_int // 100) % 100}'
+    if 'TRX_DATE' in df.columns:
+        trx = _safe_str(df['TRX_DATE'])
+        valid = trx.str.match(r'^\d{8}$', na=False)
+        dd = pd.to_numeric(trx.str[6:8], errors='coerce').astype('Int64').astype(str)
+        mm = pd.to_numeric(trx.str[4:6], errors='coerce').astype('Int64').astype(str)
+        row_label = 'citad ' + dd + '.' + mm
+        citad_label_series = row_label.where(valid, fallback_label)
+    else:
+        trx = pd.Series('', index=df.index)
+        citad_label_series = pd.Series(fallback_label, index=df.index)
 
-    # ── Build lookup: Map dc → label citad (để core tra TT) — giữ first match ──
-    citad_label_series = pd.Series(citad_label, index=df.index)
-    mapdc_to_ngay = _first_match(df['Map dc'], citad_label_series)
+    # ── Sắp theo TRX_DATE TĂNG DẦN trước khi dựng dict Map dc → nhãn: khi cửa
+    # sổ chứa nhiều ngày, 2 giao dịch khác nhau có thể trùng khoá Map dc
+    # (TRBRCD+Trace+AMOUNT — Trace rỗng khi thiếu Hub làm khoá cụt, xem
+    # PLAN_B1 mục 7 rủi ro 1). `_first_match()` giữ lần xuất hiện ĐẦU theo THỨ
+    # TỰ DÒNG — sắp theo TRX_DATE tăng dần để phiên SỚM NHẤT luôn thắng, không
+    # phụ thuộc thứ tự file/dòng không xác định.
+    sort_idx = trx.sort_values(kind='stable').index
+    mapdc_to_ngay = _first_match(
+        df['Map dc'].loc[sort_idx], citad_label_series.loc[sort_idx],
+    )
+
+    # ── Log (không im lặng chọn bừa) số khoá Map dc trùng ở NHIỀU TRX_DATE ──
+    if log is not None and 'TRX_DATE' in df.columns:
+        keys = df['Map dc'].astype(str)
+        nonblank = keys != ''
+        if nonblank.any():
+            n_trx_by_key = df.loc[nonblank].groupby(keys[nonblank])['TRX_DATE'].nunique()
+            dup = n_trx_by_key[n_trx_by_key > 1]
+            if not dup.empty:
+                examples = ', '.join(dup.index[:5])
+                log(
+                    f'[WARN] {len(dup)} khoá Map dc trùng ở nhiều TRX_DATE trong cửa sổ '
+                    f'Citad — phiên sớm nhất thắng (VD: {examples})'
+                )
 
     return df, mapdc_to_ngay
 
@@ -217,6 +426,45 @@ def detect_huy(df: pd.DataFrame) -> dict:
         return 'Đã hủy'
 
     return {k: _label(k) for k in huy_keys}
+
+
+def _khop_trace_trung(
+    trace_s: pd.Series,
+    cramount_s: pd.Series,
+    trbrcd_s: pd.Series,
+    trace_trung: dict,
+) -> pd.Series:
+    """
+    PLAN_B3 — với các dòng Core có Trace nằm trong nhóm Hub Trace trùng: chọn
+    đúng 1 dòng Hub bằng khoá phụ Số tiền trước, mã chi nhánh phát lệnh sau
+    (Q5, xác nhận 2026-09-23). Trả về Series CÙNG INDEX với `trace_s`: giá trị
+    TT đã chọn (Trạng thái của dòng Hub đó, hoặc Số tiền nếu Trạng thái rỗng —
+    LUÔN cùng 1 dòng Hub, xem `trace_trung['theo_tien']`), hoặc NaN nếu không
+    giải được (0 hoặc vẫn còn ≥2 ứng viên sau cả 2 bước lọc — Q3/Q4 PLAN_B3
+    mục 7, caller giữ hành vi cũ + log cảnh báo). Hàm THUẦN — không log.
+    """
+    theo_tien    = trace_trung.get('theo_tien', {})
+    theo_tien_cn = trace_trung.get('theo_tien_cn', {})
+
+    def _cascade(pair):
+        if not isinstance(pair, tuple):
+            return pd.NA
+        trang_thai, so_tien = pair
+        return trang_thai if trang_thai != '' else so_tien
+
+    key1 = pd.Series(list(zip(trace_s, cramount_s)), index=trace_s.index)
+    result = key1.map(theo_tien).map(_cascade)
+
+    remain = result.isna()
+    if remain.any():
+        idx2 = trace_s.index[remain]
+        key2 = pd.Series(
+            list(zip(trace_s.loc[idx2], cramount_s.loc[idx2], trbrcd_s.loc[idx2])),
+            index=idx2,
+        )
+        result.loc[idx2] = key2.map(theo_tien_cn).map(_cascade)
+
+    return result
 
 
 def process_core(
@@ -296,6 +544,9 @@ def process_core(
     trace_sot  = hub_lookups.get('trace_sotien',    {})
 
     mask = tt == ''
+    # PLAN_B3: chụp lại đúng phạm vi các dòng bước 3/4 SẮP xử lý — override
+    # Trace trùng bên dưới CHỈ được đụng vào tập này, không mở rộng ra ngoài.
+    mask_truoc_hub = mask.copy()
     if mask.any():
         hub_result = df.loc[mask, 'Trace'].astype(str).map(trace_tt)
         found_idx  = hub_result.dropna().index
@@ -307,6 +558,39 @@ def process_core(
         hub_result2 = df.loc[mask, 'Trace'].astype(str).map(trace_sot)
         found_idx   = hub_result2.dropna().index
         tt.loc[found_idx] = hub_result2.loc[found_idx].astype(str)
+
+    # ── PLAN_B3 (2026-09-23): Trace Hub trùng ≥2 giao dịch khác nhau —
+    # _first_match() ở bước 3/4 trên chỉ giữ "dòng đầu theo thứ tự file", có
+    # thể SAI (ca thật REFERENCE '1000API141779571': giữ nhầm dòng Hub 'HT
+    # lỗi' 10.000đ trong khi CRAMOUNT Core = 1.000.000 khớp đúng dòng Hub
+    # 'Chờ đi kênh'). Ghi đè CHỈ các dòng có Trace ∈ tập trùng, CHỈ trong
+    # đúng phạm vi `mask_truoc_hub` (đúng các dòng bước 3/4 vừa xử lý) —
+    # không đụng dòng nào khác, không đổi thứ tự 4 bước ưu tiên ở trên.
+    trace_trung = hub_lookups.get('trace_trung', {})
+    dup_traces  = trace_trung.get('keys', set())
+    if dup_traces and mask_truoc_hub.any():
+        trung_mask = mask_truoc_hub & df['Trace'].astype(str).isin(dup_traces)
+        if trung_mask.any():
+            chosen = _khop_trace_trung(
+                df.loc[trung_mask, 'Trace'].astype(str),
+                cramount.loc[trung_mask],
+                brcd.loc[trung_mask],
+                trace_trung,
+            )
+            resolved = chosen.notna()
+            if resolved.any():
+                idx_resolved = chosen.index[resolved]
+                tt.loc[idx_resolved] = chosen.loc[idx_resolved].astype(str)
+            if (~resolved).any():
+                ung_vien_map = trace_trung.get('ung_vien', {})
+                for tr in sorted(set(df.loc[chosen.index[~resolved], 'Trace'].astype(str))):
+                    logger.warning(
+                        "Trace trùng %r — lọc Số tiền/chi nhánh không chọn được "
+                        "đúng 1 ứng viên (0 hoặc ≥2 ứng viên còn lại sau khi lọc), "
+                        "giữ hành vi cũ (chọn dòng Hub đầu theo thứ tự file). "
+                        "Ứng viên Hub (Trạng thái, Số tiền, Chi nhánh): %s",
+                        tr, ung_vien_map.get(tr, []),
+                    )
 
     df['TT'] = tt
     return df
@@ -345,6 +629,12 @@ def match_citad_leftover_with_osb(
 
     Dòng Citad ĐÃ khớp Core (Map dc nằm trong `used_citad_mapdc`) không đụng
     tới cột 'TT' (giữ rỗng) — đã được coi là xử lý xong ở sheet Core.
+
+    Giữ nguyên hàm này (không đụng) cho tương thích ngược — pipeline thật đã
+    chuyển sang dùng `label_citad_provenance()` (đầy đủ hơn: phân biệt được
+    khớp Core hôm nay / khớp pool Core thừa cũ / khớp OSB hôm nay / khớp pool
+    OSB thừa cũ / không khớp gì), xem module docstring phần "Pool tồn đọng
+    xuyên batch" bên dưới.
     """
     df = citad_df.copy()
     df['TT'] = ''
@@ -361,3 +651,265 @@ def match_citad_leftover_with_osb(
     matched = leftover_mask & map_dc.isin(osb_key_set)
     df.loc[matched, 'TT'] = 'OSB'
     return df
+
+
+# ── Pool tồn đọng xuyên batch (Core thừa / OSB thừa) ─────────────────────────
+# Bổ sung theo tài liệu "CÁC BƯỚC LÀM ĐỐI CHIẾU ILO" (mục "Tại bảng chấm"
+# B1-B3) + đối chiếu dữ liệu chấm tay thật 09.09.2026 của người chấm Việt.
+#
+# Người chấm tay giữ 2 file "Core thừa {nhãn}.xlsx" / "OSB thừa {nhãn}.xlsx"
+# SỐNG XUYÊN NHIỀU LẦN CHẤM (nhiều batch input khác nhau) — mỗi lần chấm 1
+# batch mới, các dòng Core/OSB của batch TRƯỚC chưa kịp đi kênh được nạp lại
+# làm input phụ, so với Citad của batch MỚI; dòng nào khớp thì coi là xong,
+# dòng nào chưa khớp thì tiếp tục mang sang batch sau nữa (có thể mang qua
+# NHIỀU batch liên tiếp — xác nhận qua dữ liệu thật: pool "Core thừa 5-8.9"
+# vẫn còn lẫn 9 dòng TRDATE 25/08 và 28/08, tức đã tồn đọng qua hơn 1 lần
+# chấm trước đó, không phải chỉ mới sinh từ batch 5-8/9).
+#
+# QUYẾT ĐỊNH THIẾT KẾ (xem docs/Implementation-notes.html): nhãn dải ngày
+# ("5-8.9", "9.9"...) tính từ NGÀY CỦA BATCH ĐANG XỬ LÝ (input đưa vào lần
+# chấm đó), KHÔNG PHẢI từ TRDATE thật của các dòng còn tồn đọng bên trong —
+# xác nhận qua dữ liệu thật: pool "Core thừa 5-8.9.xlsx" chứa 16.658 dòng
+# nhưng TRDATE phân bố {25/08: 1, 28/08: 8, 07/09: 4, 08/09: 16.645} — nếu
+# tính nhãn theo min-max TRDATE thực tế sẽ ra "25.8-8.9", sai với nhãn thật
+# "5-8.9" (đúng bằng dải ngày batch 5-8/9 đã được chấm, bất kể trong đó có
+# lẫn stragglers rất cũ từ nhiều batch trước nữa).
+
+
+def build_pool_label(days: 'list' = None) -> str:
+    """
+    Nhãn dải ngày kiểu "5-8.9" (nhiều ngày cùng tháng), "9.9" (1 ngày), hoặc
+    "25.8-8.9" (khác tháng) — tính từ danh sách `datetime.date` của các ngày
+    ĐÃ XỬ LÝ trong batch (không phải từ TRDATE của dữ liệu tồn đọng, xem
+    comment ở trên). `days` rỗng/None → trả chuỗi rỗng.
+    """
+    if not days:
+        return ''
+    days = sorted(days)
+    lo, hi = days[0], days[-1]
+    if lo == hi:
+        return f'{lo.day}.{lo.month}'
+    if lo.month == hi.month:
+        return f'{lo.day}-{hi.day}.{lo.month}'
+    return f'{lo.day}.{lo.month}-{hi.day}.{hi.month}'
+
+
+def build_mapdc_label_map(df: pd.DataFrame, mapdc_col: str, label: str) -> dict:
+    """
+    {Map dc → `label`} cho TOÀN BỘ dòng của 1 pool (Core thừa hoặc OSB thừa
+    hoặc OSB hôm nay) — cả pool dùng CHUNG 1 nhãn (không phải tính riêng theo
+    từng dòng), nên không cần giữ "lần đầu tiên" như `_first_match()`.
+    """
+    if df is None or df.empty or mapdc_col not in df.columns:
+        return {}
+    keys = df[mapdc_col].astype(str)
+    keys = keys[keys != '']
+    if keys.empty:
+        return {}
+    return dict.fromkeys(keys, label)
+
+
+# TT của Core coi là ĐÃ XỬ LÝ XONG (không phải "còn chờ đi kênh") — mọi giá
+# trị khác (kể cả rỗng, kể cả nhãn Trạng thái thô từ Hub như "Chờ đi kênh"
+# HOẶC "Hoàn thành") vẫn phải mang sang pool "Core thừa" của batch sau. Xem
+# process_core(): nhãn 'citad {d}.{m}' sinh ở bước khớp Citad, 'Hủy'/'Đã
+# hủy'/'quyết toán'/'OSB' sinh ở bước 1/1.5/1.6 — CHỈ 4 GIÁ TRỊ NÀY coi là
+# xong, không thêm bất kỳ giá trị Trạng thái thô nào khác của Hub.
+#
+# 'Hoàn thành' CỐ Ý KHÔNG nằm trong danh sách — xác nhận trực tiếp từ người
+# chấm Việt (2026-09-13): Trạng thái Hub phản ánh TÌNH TRẠNG TẠI THỜI ĐIỂM
+# TRA CỨU, không phải tại thời điểm đang chấm. "Chấm ngày 3, những lệnh đi
+# SAU ngày 3 (cả 'hoàn thành' hay 'chờ đi kênh') đều phải theo dõi, vì ngày 4
+# đi là ngày chờ đi kênh CỦA NGÀY 3, nhưng tại thời điểm tra cứu nó ĐÃ hoàn
+# thành." Và: "Nếu chấm hàng ngày, sáng tra dữ liệu ngay thì ít tình trạng
+# lung tung; để 1-2 ngày mới tra thì 'chờ đi kênh' sẽ tự chuyển thành 'hoàn
+# thành'." Tức 'Hoàn thành' KHÔNG chứng minh giao dịch đã đi kênh ĐÚNG NGÀY
+# đang chấm — chỉ chứng minh nó đã đi kênh TRƯỚC thời điểm tra cứu (có thể là
+# hôm sau, hôm sau nữa). Coi 'Hoàn thành' là "xong" sẽ làm mất dấu các giao
+# dịch thật sự thuộc phiên "chờ đi kênh" của ngày đang chấm.
+#
+# (Từng có 1 lần SỬA SAI thêm 'Hoàn thành' vào đây — suy diễn từ việc 2 dòng
+# 'Hoàn thành' không xuất hiện trong 1 mẫu pool CỦA BATCH KHÁC, KHÔNG PHẢI
+# bằng chứng đủ mạnh. Đã tự sửa lại đúng khi được Việt xác nhận trực tiếp —
+# bài học: không suy diễn ý nghĩa 1 giá trị dữ liệu thô từ 1 mẫu nhỏ, phải
+# hỏi khi chưa chắc, xem SKILL.md.)
+#
+# 'Đã hủy' CŨNG có thể cần xem lại tương tự (Việt: "nhiều khi tổng Đã hủy
+# không bằng 0... làm sau [khác ngày] có thể 2-3 ngày sau mới hủy... tổng
+# không bằng 0 cũng phải tìm [nguyên nhân]") — tức 1 dòng 'Đã hủy' riêng lẻ
+# không chắc đã "xong" nếu group (REFERENCE, TRBRCD) của nó chưa net về 0.
+# CHƯA SỬA phần này — Việt đang xem lại, sẽ xác nhận thêm; xem
+# project_ilo1000_pool_ton_dong_xuyen_batch_2026-09-13 (memory).
+_CORE_TT_DA_XONG = {'Hủy', 'Đã hủy', 'quyết toán', 'OSB'}
+
+
+def is_core_tt_resolved(tt) -> bool:
+    """True nếu dòng Core này đã coi là xử lý xong, không cần mang sang pool
+    'Core thừa' nữa (đã khớp Citad hôm nay, hoặc Hủy/Đã hủy/quyết toán/OSB —
+    CỐ Ý KHÔNG gồm 'Hoàn thành', xem cảnh báo ở `_CORE_TT_DA_XONG`)."""
+    s = ('' if tt is None else str(tt)).strip()
+    if s in _CORE_TT_DA_XONG:
+        return True
+    return s.lower().startswith('citad ')
+
+
+def build_core_thua_pool(core_out: pd.DataFrame) -> pd.DataFrame:
+    """Lọc `core_out` (đã có cột 'TT' từ `process_core()`) về đúng các dòng
+    còn CHỜ ĐI KÊNH thật sự — nguyên liệu để gộp vào pool 'Core thừa' mang
+    sang batch chấm sau (xem `build_core_thua_forward()`)."""
+    if core_out.empty or 'TT' not in core_out.columns:
+        return core_out.iloc[0:0].copy()
+    resolved = core_out['TT'].map(is_core_tt_resolved)
+    return core_out.loc[~resolved].copy()
+
+
+def build_core_thua_forward(
+    old_pool_df: pd.DataFrame,
+    new_leftover_df: pd.DataFrame,
+    doi_chieu_col: str = 'Đối chiếu',
+) -> pd.DataFrame:
+    """
+    Pool 'Core thừa' MỚI mang sang batch kế tiếp = (dòng pool CŨ mà cột
+    `doi_chieu_col` VẪN CÒN chưa khớp — rỗng hoặc '#N/A') HỢP (dòng Core mới
+    còn chờ đi kênh của chính batch vừa chấm, xem `build_core_thua_pool()`).
+    Dòng pool cũ ĐÃ khớp (có `doi_chieu_col` là 1 ngày cụ thể) bị LOẠI — coi
+    là xử lý xong, không mang tiếp.
+    """
+    old_unresolved = pd.DataFrame()
+    if old_pool_df is not None and not old_pool_df.empty:
+        if doi_chieu_col in old_pool_df.columns:
+            col = old_pool_df[doi_chieu_col]
+            dc = col.where(col.notna(), '').astype(str).str.strip()
+            old_unresolved = old_pool_df.loc[(dc == '') | (dc == '#N/A')].copy()
+        else:
+            # Pool cũ chưa từng qua vòng đối chiếu nào (chưa có cột này) —
+            # coi như toàn bộ còn tồn đọng, không loại dòng nào.
+            old_unresolved = old_pool_df.copy()
+
+    parts = [d for d in (old_unresolved, new_leftover_df) if d is not None and not d.empty]
+    if not parts:
+        return pd.DataFrame()
+    result = pd.concat(parts, ignore_index=True)
+
+    # BẮT BUỘC cột `doi_chieu_col` luôn có mặt trong kết quả, kể cả khi
+    # `old_pool_df` rỗng (lần đầu bật tính năng, hoặc pool vừa sạch) — dòng
+    # Core/OSB leftover mới phát sinh trong CHÍNH batch này chưa từng có cột
+    # này (đến từ `process_core()`/dữ liệu OSB thô). Thiếu cột này thì file
+    # xuất ra ở round này sẽ KHÔNG được `detect.py::_sniff_pool_xlsx()` nhận
+    # diện là pool ở round SAU (yêu cầu bắt buộc có cột 'Đối chiếu') — toàn bộ
+    # tồn đọng của round này lặng lẽ biến mất khỏi pool, không log không lỗi
+    # (phát hiện qua phản biện Agent vòng 2, 2026-09-13, tái lập được bằng
+    # code thật — xem docs/Implementation-notes.html card 173).
+    if doi_chieu_col not in result.columns:
+        result[doi_chieu_col] = '#N/A'
+    else:
+        result[doi_chieu_col] = result[doi_chieu_col].where(result[doi_chieu_col].notna(), '#N/A')
+        blank_mask = result[doi_chieu_col].astype(str).str.strip() == ''
+        result.loc[blank_mask, doi_chieu_col] = '#N/A'
+
+    return result
+
+
+def mark_pool_doi_chieu(
+    map_dc: pd.Series,
+    existing: 'pd.Series | None',
+    citad_mapdc_keys: set,
+    ngay_int: int,
+) -> pd.Series:
+    """
+    Điền cột 'Đối chiếu' cho pool tồn đọng (Core thừa/OSB thừa): dòng nào
+    CHƯA khớp (`existing` rỗng hoặc '#N/A') mà `map_dc` nằm trong
+    `citad_mapdc_keys` (Map dc của Citad batch đang chấm) → ghi `ngay_int`;
+    còn lại → '#N/A'. Dòng ĐÃ khớp từ trước (`existing` là 1 ngày cụ thể)
+    giữ NGUYÊN, không bị ghi đè lại thành '#N/A' — 1 khi đã xác nhận đi kênh
+    thành công thì không "quên" ở lần chấm sau.
+    """
+    map_dc = map_dc.astype(str)
+    if existing is None:
+        existing = pd.Series([''] * len(map_dc), index=map_dc.index)
+    existing_s = existing.where(existing.notna(), '').astype(str).str.strip()
+    already_resolved = ~existing_s.isin(('', '#N/A'))
+
+    result = pd.Series(index=map_dc.index, dtype=object)
+    result.loc[already_resolved] = existing.loc[already_resolved]
+
+    pending = ~already_resolved
+    matched = pending & map_dc.isin(citad_mapdc_keys)
+    result.loc[matched] = ngay_int
+    result.loc[pending & ~matched] = '#N/A'
+    return result
+
+
+def used_label_map_keys(tt: pd.Series, map_dc: pd.Series, label_map: dict) -> set:
+    """
+    Tổng quát hóa `used_citad_keys()` cho hướng ngược lại: tập các Map dc
+    trong `label_map` THỰC SỰ được ít nhất 1 dòng (của `tt`/`map_dc`, cùng
+    index) chọn trúng — tức `tt == label_map[map_dc]`. Dùng để biết dòng OSB
+    hôm nay/pool nào đã bị 1 dòng Citad "tiêu thụ" (gán TT bằng đúng nhãn của
+    nó), tránh nhầm với key có mặt trong `label_map` nhưng bị nhãn ưu tiên cao
+    hơn (Core hôm nay, Core thừa pool) ghi đè trước — xem `label_citad_provenance()`.
+    """
+    if tt is None or len(tt) == 0 or not label_map:
+        return set()
+    mapped = map_dc.astype(str).map(label_map)
+    really_used = tt.astype(str) == mapped.fillna('\0__none__')
+    return set(map_dc.astype(str)[really_used])
+
+
+def label_citad_provenance(
+    citad_df: pd.DataFrame,
+    used_citad_mapdc: set,
+    ngay_int: int,
+    core_pool_label_map: 'dict | None' = None,
+    osb_today_label_map: 'dict | None' = None,
+    osb_pool_label_map: 'dict | None' = None,
+    cross_day_used_map: 'dict | None' = None,
+) -> pd.Series:
+    """
+    Cột TT của SHEET CITAD (khác nghĩa cột TT của sheet Core) — cho biết mỗi
+    dòng Citad khớp trúng nguồn nào: (0) đã bị Core của MỘT NGÀY KHÁC trong
+    CÙNG BATCH tiêu thụ → nhãn trong `cross_day_used_map` (PLAN_B1 Q5, chốt
+    2026-09-23 — xem dưới); (1) Core hôm nay → ghi `ngay_int`; (2) pool Core
+    thừa cũ → nhãn có sẵn trong `core_pool_label_map` (VD "Core 5-8.9"); (3)
+    OSB hôm nay → nhãn trong `osb_today_label_map`; (4) pool OSB thừa cũ →
+    nhãn trong `osb_pool_label_map`; còn lại → RỖNG (= "Citad thừa" của ngày
+    này, xuất riêng cho người chấm tay điều tra tiếp — không tự suy luận
+    thêm).
+
+    `cross_day_used_map` ({Map dc → ngay_int ngày đã dùng}, mới — Q5): do cửa
+    sổ Citad giờ rộng bằng cả batch (`_citad_forward_days()`, Q1=(b)), 1 dòng
+    Citad TRX_DATE=T có thể bị Core của NGÀY KHÁC (T-1, hoặc bất kỳ ngày nào
+    trước đó trong batch mà cửa sổ của nó cũng vươn tới T) tiêu thụ trước khi
+    đến lượt báo cáo của chính ngày T — không đánh dấu thì dòng đó hiện nhầm
+    "Citad thừa" ở báo cáo ngày T dù thực ra đã xong. Kiểm TRƯỚC 3 pool label
+    khác — dữ liệu trong CHÍNH batch đang chạy mới hơn pool từ batch cũ.
+
+    Bước (1)→(2) ĐÚNG thứ tự tài liệu gốc (mục "Tại bảng chấm" B1: lọc N/A
+    rồi mới Vlookup Core thừa). Thứ tự (3) trước (4) — OSB hôm nay ưu tiên
+    hơn pool OSB cũ — là LỰA CHỌN CỦA CODE, KHÔNG PHẢI mô tả trong tài liệu:
+    docx chỉ có 1 bước Vlookup duy nhất trên 1 sheet đã DÁN GỘP OSB cũ+mới
+    làm chung ("Tạo cột Đối chiếu: Copy Phần OSB ngày T-1... sang"), không
+    tách 2 mức ưu tiên riêng. Phản biện Agent vòng 2 (2026-09-13) xác nhận:
+    dữ liệu mẫu thật (`Cham OSB` 09.09) có 0 khóa Map dc trùng giữa OSB hôm
+    nay và pool OSB cũ — nên thứ tự (3)/(4) CHƯA từng ảnh hưởng kết quả thật,
+    nhưng CHƯA được Việt xác nhận nếu có va chạm thật trong tương lai (xem
+    câu hỏi A2 gửi Việt).
+    """
+    if citad_df.empty or 'Map dc' not in citad_df.columns:
+        return pd.Series(dtype=object)
+
+    map_dc = citad_df['Map dc'].astype(str)
+    tt = pd.Series('', index=citad_df.index, dtype=object)
+
+    remaining = ~map_dc.isin(used_citad_mapdc)
+    tt.loc[~remaining] = ngay_int
+
+    for label_map in (cross_day_used_map, core_pool_label_map, osb_today_label_map, osb_pool_label_map):
+        if not label_map or not remaining.any():
+            continue
+        found = remaining & map_dc.isin(label_map)
+        if found.any():
+            tt.loc[found] = map_dc.loc[found].map(label_map)
+            remaining = remaining & ~found
+
+    return tt

@@ -19,6 +19,7 @@ from typing import Any
 from backend.core.don_dep import moc_don_gan_nhat, xoa_thu_muc_cu
 from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.core.uploads import safe_filename
+from backend.database import DB_PATH
 from backend.services.ilo1000.pipeline import main_from_dir
 from backend.services.ilo1000.config import CLEANUP_TTL
 
@@ -129,12 +130,17 @@ def _run(job_id: str, input_dir: str, output_dir: str):
 
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý ILO1000...')
+        # `main_from_dir` chạy ở TIẾN TRÌNH RIÊNG qua chay_tach() — tham số phải pickle
+        # được nên truyền ĐƯỜNG DẪN DB, không truyền sqlite3.Connection (không pickle
+        # được). Tiến trình con tự mở/đóng kết nối ngay trước khi cần tra lịch nghỉ lễ
+        # (xem `pipeline.py::main_from_dir`, phát hiện qua review PR#138 — Khánh, xem card 178).
         output_path = chay_tach(
             main_from_dir, ten='Chấm ILO1000',
             input_dir=input_dir,
             output_dir=output_dir,
             log_callback=log,
             cancel_event=job['cancel_event'],
+            db_path=str(DB_PATH),
         )
 
         if output_path is None:

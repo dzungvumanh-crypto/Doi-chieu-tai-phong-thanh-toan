@@ -4,6 +4,23 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/09/2026 Chấm ILO1000 - **Khớp đúng hơn qua kỳ nghỉ dài và sau giờ cutoff Citad; ghi rõ dòng nào chưa đối chiếu được**
+    + ✅ Kỳ nghỉ lễ dài (vd nghỉ Quốc khánh, Tết): chương trình tự gộp dữ liệu của các ngày nghỉ theo **lịch ngày lễ
+      và ngày làm bù đã khai trong hệ thống**, không chỉ cuối tuần như trước. ⚠️ Ngày lễ, ngày làm bù chưa khai trên
+      hệ thống thì chương trình không biết — cần khai trước khi chấm đợt có ngày đó
+    + ✅ Giao dịch sau giờ cutoff Citad (chuyển sang phiên hôm sau) nay khớp được với Citad của **ngày sau trong cùng
+      đợt nạp**, không còn bị ghi nhầm "Chờ đi kênh". Cột TT ghi đúng ngày Citad thật của từng dòng (`citad 4.9`…)
+    + ✅ Nạp lại được file **"Core thừa" / "OSB thừa"** của lần chấm trước để khớp tiếp, đặt tên file tuỳ ý
+    + ✅ File OSB xuất từ IPCAS (tên dạng `DULIEUCHITIETHACHTOAN_…`) nay được nhận, trước đây bị bỏ qua lặng lẽ
+    + ✅ Mã Trace trên Hub bị trùng giữa 2 giao dịch: chương trình xét thêm **Số tiền**, rồi **mã chi nhánh** để chọn
+      đúng giao dịch, thay vì luôn lấy dòng đầu tiên
+    + ✅ Cột mới cuối sheet citad/core: **"Ghi chú đối chiếu"**, kèm cảnh báo đầu sheet Tóm tắt. Thiếu file đầu vào
+      (Core thừa / OSB thừa / OSB hôm nay / Hub) thì dòng liên quan ghi rõ **chưa đối chiếu được vì thiếu file gì**,
+      để phân biệt với dòng đã kiểm mà không khớp thật. ⚠️ Thiếu file **Hub** thì **mọi dòng** đều có ghi chú, kể cả
+      dòng đã khớp — cần nạp Hub rồi chạy lại
+    + ⚠️ Kết quả có thể khác lần chấm trước ở đúng các trường hợp trên. Vài quy tắc vẫn đang chờ người chấm xác nhận
+      (so số tiền nào khi Trace trùng, cách ghi nhãn ngày) — thấy chỗ lệch với bảng chấm tay thì báo lại
+
 - 25/09/2026 Chấm đối chiếu ACH - **Trang chia 3 tab chạy riêng, thêm nhiều phần đối chiếu và màn Gộp pHub nhiều ngày**
     + ✅ Trang chia thành **3 tab**: **Timeout + Đối chiếu đi**, **Đối chiếu đến**, **Báo cáo**. Mỗi tab có ô nạp
       file và nút chạy riêng. Tab **Đối chiếu đến** chạy được mà **không cần file GW đi**. Cả trang vẫn chỉ chạy

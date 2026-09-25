@@ -786,6 +786,28 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
 - Phân quyền riêng theo nhóm: `menu.cham_ach` = xem trang / kiểm tra file / tải kết quả,
   `cham_ach.process` = được bấm Chạy, Chạy tiếp sau Checkpoint và Dừng
 
+### Module Chấm ILO1000
+- Đối chiếu 4 nguồn Citad ↔ Core (GL02) ↔ PaymentHub ↔ OSB, kèm EICP. Menu: **Đối chiếu → Phòng Thanh toán →
+  Chấm ILO1000** (mã quyền `menu.cham_ilo1000`). Pipeline ở `backend/services/ilo1000/`, chạy ở tiến trình riêng
+  qua `chay_tach()` như các cửa đối chiếu khác
+- Nhận dạng file: hầu hết theo tên; **OSB gốc IPCAS** (`DULIEUCHITIETHACHTOAN_…xlsx`) và **file pool tồn đọng**
+  nhận theo **nội dung** (`detect.py::_sniff_osb_xlsx()` / `_sniff_pool_xlsx()`), người chấm đặt tên tuỳ ý
+- **Ngày nghỉ**: cửa sổ gộp dữ liệu chuyển tiếp (carryover) tính theo lịch thật `tai_lich()` — ngày lễ + ngày làm
+  bù khai ở màn Nghỉ phép / Sổ trực — không còn lùi cứng 3 ngày cho Thứ 2. `main_from_dir(db_path=...)` nhận
+  **đường dẫn** CSDL, tiến trình con tự mở kết nối (kết nối SQLite không gửi qua tiến trình được)
+- **Cửa sổ Citad nhìn tới**: sau giờ cutoff Citad, giao dịch sang phiên sau → dòng Core ngày T khớp được với Citad
+  của **mọi ngày có mặt trong batch**; Hub mở cửa sổ tương ứng. Nhãn TT `citad {d}.{m}` theo `TRX_DATE` thật của
+  từng dòng Citad
+- **Pool tồn đọng xuyên batch**: nạp lại file "Core thừa" / "OSB thừa" của lần chấm trước để khớp tiếp
+- **Trace Hub trùng** giữa ≥ 2 giao dịch: chỉ ở các Trace trùng mới thêm khoá phụ Số tiền rồi mã chi nhánh
+  (`lookups['trace_trung']`); giao dịch không trùng giữ nguyên cách khớp "dòng đầu tiên" như bảng tay
+- Cột cuối **"Ghi chú đối chiếu"** (sheet citad/core) + khối cảnh báo đầu sheet Tóm tắt: phân biệt **chưa đối chiếu
+  được** (thiếu pool Core thừa / pool OSB thừa / OSB hôm nay / Hub) với **đã kiểm mà không khớp**. Thiếu Hub
+  đánh dấu **mọi dòng**, kể cả dòng đã khớp (thiếu Hub làm sai khoá Trace); ba nguồn kia chỉ đánh dấu dòng TT rỗng
+- Còn chờ người chấm xác nhận nghiệp vụ (code đang dùng mặc định): so CRAMOUNT hay DRAMOUNT/phí ở khoá phụ Số tiền;
+  thứ tự Số tiền → chi nhánh; định dạng nhãn `citad {d}.{m}`; cột "Đối chiếu" của pool ghi ngày báo cáo hay
+  `TRX_DATE`. Chi tiết: card 170–178 trong `docs/Implementation-notes.html`
+
 ### Module Đối chiếu CITAD ↔ PaymentHub
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
 - Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu CITAD**

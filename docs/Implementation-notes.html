@@ -21329,11 +21329,827 @@ This may happen if you try to create UI from a background task.</pre>
 
       <div class="note">Grep <code>huy_phien_khac</code> toàn bộ <code>backend/</code>,
         <code>frontend/</code>, <code>tests/</code> (mã nguồn <code>.py</code>) sau khi gỡ: 0 kết quả.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">170</span>
+      <span class="card-title">Chấm ILO1000 — cửa sổ carryover tổng quát cho MỌI kỳ nghỉ dài, không chỉ cuối tuần (2026-09-05)</span>
+      <span class="badge badge-info">Giai đoạn A xong, chưa mở PR</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện từ</span> Chấm chiều ĐI 29/8-3/9 (nghỉ bù Quốc khánh 2/9)</div>
+      <p>Nghỉ từ chiều Thứ 6 28/8 đến hết Thứ 4 2/9, đi làm lại Thứ 5 3/9 (BO xác nhận trực tiếp —
+        Citad chỉ có phiên ngày Ngân hàng Nhà nước mở sổ). <code>merge_monday_carryover()</code>
+        cũ chỉ lùi <b>cứng đúng 3 ngày</b> cho Thứ 2 (<code>weekday()==0</code>) — không xử lý được
+        kỳ nghỉ 5 ngày này. Phải xử lý bằng script tay gọi thẳng
+        <code>load_*</code>/<code>process_*</code> ngoài pipeline, không đụng code đã merge.
+        Kết quả tay khớp <b>55.157/55.157 dòng</b> với file chấm thủ công <code>kq29-3.9.xlsx</code>,
+        253 dòng lệch TT thật sau khi lọc bỏ khác biệt cách ghi nhãn (báo cáo chi tiết giao cho
+        người chấm phối hợp, không phải nội dung card này).</p>
+
+      <div class="label"><span class="pill pill-blue">Fix — tổng quát hoá bằng lịch nghỉ lễ thật</span> <code>tai_lich()</code> thay vì hard-code</div>
+      <p>Hàm mới <code>carryover_window(ngay, lich)</code> (<code>detect.py</code>): LUÔN gồm T-1
+        (cutoff ngày thường); nếu T-1 không phải ngày làm việc (tra bằng
+        <code>la_ngay_lam_viec()</code> — đã dùng ở <code>attendance.py</code>/<code>leaves.py</code>
+        /<code>handover_report_service.py</code>, xem <code>lich_lam_viec.py</code>), đi lùi tiếp
+        qua toàn bộ chuỗi ngày nghỉ liên tiếp VÀ gồm luôn ngày làm việc gần nhất trước chuỗi (phiên
+        thật gần nhất, cũng có cutoff riêng vào T). Dài bao nhiêu ngày cũng được, không hard-code số
+        ngày. Thay cho công thức cũ <code>back = (1,2,3) if weekday()==0 else (1,)</code> ở
+        <code>_osb_carryover_days()</code>.</p>
+
+      <p><code>merge_previous_day_eicp()</code> và <code>merge_monday_carryover()</code>
+        <b>giữ nguyên tên hàm</b> (đã có tiền lệ ở <code>_osb_carryover_days()</code>: "tên giữ
+        nguyên, logic tổng quát") — điều kiện chọn hàm đổi từ <code>weekday()!=0</code>/<code>==0</code>
+        sang <code>la_ngay_lam_viec(T-1, lich)</code> đúng/sai. Với <code>lich=LICH_RONG</code>
+        (mặc định, không truyền <code>db</code>) hai điều kiện tương đương hệt nhau — 125/125 test cũ
+        (bao gồm 3 test <code>TestOsbCarryoverDays</code>, các test
+        <code>TestPreviousDayEicpCarryover</code>/<code>TestMondayCarryover</code>) pass nguyên
+        không sửa logic, chỉ 1 chỗ sửa assertion do đổi định dạng log (liệt kê ngày cụ thể thay vì
+        nhãn "thứ 6/7/CN" cố định).</p>
+
+      <p><code>main_from_dir()</code> nhận thêm <code>db: sqlite3.Connection | None = None</code> —
+        có thì gọi <code>group_files_by_date()</code> 2 lần: lần 1 (lịch rỗng, không log) chỉ để biết
+        khoảng ngày trong batch, tra <code>tai_lich()</code> lùi 14 ngày trước ngày sớm nhất (đủ rộng
+        cho Tết mà không phải đoán trước độ dài), rồi gọi lại lần 2 với lịch thật. Không tốn kém —
+        <code>group_files_by_date()</code> không đọc nội dung GL02/EICP, chỉ đọc 2 dòng đầu CSV citad
+        để nhận dạng loại file. <code>ilo1000_service.py::_run()</code> tự mở kết nối/đóng ở
+        <code>finally</code> — theo đúng pattern <code>backend/core/audit_queue.py</code>
+        (<code>sqlite3.connect(DB_PATH, ...)</code> trần trụi), <b>KHÔNG</b> qua
+        <code>backend.database.get_db()</code>.</p>
+
+      <div class="caution"><b>Lỗi thật đã dính, phát hiện qua phản biện độc lập (2026-09-08):</b>
+        bản đầu của thay đổi này viết <code>db = get_db()</code> — <code>get_db()</code> là
+        generator function CHỈ dùng đúng qua FastAPI <code>Depends(get_db)</code> (mọi nơi khác
+        trong repo, VD <code>attendance.py</code>, đều gọi qua <code>Depends</code>, không nơi nào
+        gọi trần trụi). Gọi trực tiếp trả về <b>generator object</b>, thân hàm (kể cả
+        <code>sqlite3.connect()</code>) chưa chạy — <code>tai_lich(db, ...)</code> gọi
+        <code>db.execute(...)</code> sẽ <code>AttributeError: 'generator' object has no attribute
+        'execute'</code> ngay lần chạy job thật đầu tiên. Test suite không bắt được: mọi test gọi
+        thẳng <code>main_from_dir(db=&lt;sqlite3.Connection thật&gt;)</code>, không có test nào
+        chạy qua <code>chay_job()</code>/<code>_run()</code> thật — nếu merge nguyên trạng, MỌI
+        job ILO1000 (không riêng batch có nghỉ lễ) sẽ lỗi ngay khi lên develop. Đã sửa: mở kết nối
+        trần đúng pattern <code>audit_queue.py</code>, không qua <code>get_db()</code>.</div>
+
+      <div class="caution"><b>Bug tiềm ẩn phát hiện thêm — merge Core vào ngày đi làm lại trước đây
+        VÔ TÁC DỤNG với sheet xuất ra:</b> <code>merge_monday_carryover()</code> gộp đúng đường dẫn
+        file Core của Thứ 7/CN vào <code>day_groups[T]['core']</code>, nhưng
+        <code>_run_one_day()</code> gọi <code>_filter_core_by_date(core_raw, date_str)</code> lọc
+        CỨNG về <b>đúng 1 TRDATE</b> = ngày T — xoá sạch dữ liệu Thứ 7/CN vừa gộp trước khi xuất
+        Excel. Tác dụng thật sự trước đây chỉ là đóng góp cho <code>huy_map</code> xuyên ngày (tính
+        trên <code>all_core_df</code> ở <code>main_from_dir()</code>), KHÔNG bao giờ khiến Thứ 7/CN
+        xuất hiện trong sheet 'core' của báo cáo Thứ 2 — <b>ảnh hưởng ngược cả các batch cuối tuần cũ
+        đã chấm</b>, không riêng kỳ nghỉ dài. Sửa: <code>_filter_core_by_date()</code> nhận thêm
+        <code>set[str]</code> (giữ tương thích tham số <code>str</code> đơn cũ),
+        <code>_run_one_day()</code> tính đúng tập TRDATE cần giữ = ngày T + mọi ngày NGHỈ trong cửa
+        sổ carryover.</p>
+
+      <div class="label"><span class="pill pill-green">Verify</span> 3 batch thật, dùng bản sao DB (không đụng DB thật)</div>
+      <table>
+        <tr><th>Batch</th><th>Trước fix</th><th>Sau fix (có <code>db</code> khai nghỉ lễ)</th></tr>
+        <tr><td><code>11-12.8.2026</code> (Thứ 3-4, không dính cuối tuần/lễ)</td>
+            <td colspan="2">Byte-for-byte giống hệt cả 2 sheet 'core' (72.621 và 71.416 dòng) —
+                <code>DataFrame.equals()</code> = <code>True</code>.</td></tr>
+        <tr><td><code>23-24.8.2026</code> (24/8 = Thứ 2 thật, CN 23/8 có dữ liệu)</td>
+            <td>Core Thứ 2 = 30.706 dòng, khớp citad/hub = 23.988</td>
+            <td>Core Thứ 2 = 33.705 dòng (+2.999, đúng bằng số dòng CN 23/8), khớp citad/hub = 26.987
+                (+2.999 — <b>toàn bộ</b> backlog CN giờ khớp đúng qua phiên Thứ 2, "Chưa khớp" giữ
+                nguyên 6.718 không đổi)</td></tr>
+        <tr><td>ĐI 29/8-3/9 (nghỉ bù Quốc khánh, dữ liệu gốc CHƯA tách file tay)</td>
+            <td>Chỉ nhóm được 20260829 (rỗng, citad=0) — xem card gap Giai đoạn B dưới</td>
+            <td>Core 3/9 = <b>55.157 dòng</b>, khớp citad/hub = 49.517 — trùng khớp chính xác kết quả
+                script tay (55.157) và file chấm thủ công <code>kq29-3.9.xlsx</code> (55.157)</td></tr>
+      </table>
+
+      <div class="note"><b>Vì sao ĐI 29/8-3/9 ra đúng dù Giai đoạn B (nhận diện ngày theo nội dung
+        file, chưa làm) vẫn còn thiếu:</b> tình cờ file CSV gộp cả tuần (chứa đủ TRDATE 29/8-3/9)
+        đã được gán vào nhóm "20260829" bởi cách đọc tên file cũ, và "20260829" nằm trong cửa sổ
+        carryover mới của ngày 3/9 — merge kéo theo cả file đó, cộng dồn đủ 55.157 dòng. Đây là may
+        mắn cấu trúc file cụ thể, <b>không phải Giai đoạn A tự giải quyết được Giai đoạn B</b> — batch
+        khác với cách đặt tên khác vẫn có thể vẫn thiếu ngày. Giai đoạn B (đọc TRDATE/TRADATE thật
+        thay vì suy từ tên file GL02/EICP) vẫn cần làm riêng.</div>
+
+      <p>Test mới: 7 test trong <code>TestCarryoverWindowNghiLeDai</code> +
+        <code>TestMainFromDirLichNghiLeDai</code> (<code>test_ilo1000_algorithm.py</code>) — tái hiện
+        đúng kịch bản nghỉ bù Quốc khánh (5 ngày liên tiếp không phải cuối tuần chuẩn), nghỉ lễ 1
+        ngày giữa tuần, và toàn trình <code>main_from_dir(db=...)</code> qua DB in-memory có bảng
+        <code>public_holidays</code>/<code>duty_special_days</code> thật. 125/125 test module ILO1000
+        pass (118 cũ + 7 mới).</p>
+
+      <div class="note"><b>Lỗi có sẵn không liên quan, vá kèm vì chặn tự kiểm chứng:</b>
+        <code>ilo1000_service.py</code> gọi <code>os.listdir()</code> nhưng chưa từng
+        <code>import os</code> — job sẽ <code>NameError</code> ngay khi chạy xong thành công. Thêm
+        1 dòng import.</div>
+
+      <div class="caution"><b>Việc ngoài code — chưa làm:</b> DB thật (<code>data/ksnb.db</code>)
+        CHƯA khai 31/8, 1/9, 2/9/2026 vào <code>public_holidays</code> — cần người có quyền khai qua
+        màn <b>Nghỉ phép → tab ngày lễ</b> trước khi cơ chế này có tác dụng trên dữ liệu thật kế
+        tiếp. Việc của HR/admin, không tự ý ghi qua script.</div>
+
+      <p><b>Chưa làm — Giai đoạn B (kế hoạch riêng, sau khi PR Giai đoạn A này được duyệt):</b> đọc
+        TRDATE/TRADATE thật của GL02/EICP thay vì suy từ tên file (<code>_RE_GL02_CSV</code>,
+        <code>_RE_GL02_ZIP</code>, <code>_RE_EICP_DAY</code> ở <code>detect.py</code>) — rủi ro hiệu
+        năng (đọc nội dung sớm hơn) cần thiết kế riêng, xem kế hoạch đã duyệt cùng ngày.</p>
+
+      <p>Branch/worktree: <code>feat/ilo1000-nghi-le-dai-2026-09-05</code>,
+        <code>E:\Clause code\TTTT-ilo1000-nghi-le-dai</code> — chưa commit, chưa mở PR.</p>
 
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-24</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">171</span>
+      <span class="card-title">Chấm ILO1000 — SMF dùng nhầm Số Trace 1, phải là Số Trace 2; Hub cần đủ carryover tới (2026-09-07, người chấm Việt phát hiện)</span>
+      <span class="badge badge-info">Đã sửa process.py, chưa commit; cửa sổ carryover Hub mới sửa ở kết quả tay, chưa đưa vào pipeline</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Báo cáo người chấm</span> Việt kiểm tra kết quả đợt ĐI 29/8-3/9, phát hiện 2 lỗi liên tiếp</div>
+      <p>(1) "Chỉ dùng một file Hub, vẫn còn dữ liệu chưa được chấm" — kiểm tra lại đúng: cửa sổ
+        carryover Hub (6 ngày 29/8-3/9) cắt mất dữ liệu từ file thứ 3
+        (<code>pHub..._20260904154557.xlsx</code>) có "Ngày giờ kênh trả" tới tận 4/9 — 78.776/132.401
+        dòng Hub (60%) bị loại trước khi vào bước khớp. (2) Sau khi gộp đủ Hub, Việt kiểm tra kỹ hơn
+        thấy "Số Trace của giao dịch SMF đang không đúng".</p>
+
+      <div class="label"><span class="pill pill-blue">Nguyên nhân gốc — SMF</span> Trace dùng nhầm cột</div>
+      <p><code>process_hub()</code> (<code>backend/services/ilo1000/process.py</code>): dòng Hub có
+        "Số giao dịch" chứa <code>SMF</code> trước đây giữ nguyên <b>Số Trace 1</b> (xác nhận từ
+        người dùng 2026-07-16). Đối chiếu 1 dòng thật (batch 3/9): Core REFERENCE
+        <code>1000API200192551</code>, Citad khớp đúng qua Map dc <code>TRBRCD+Trace+AMOUNT</code>
+        cùng chi nhánh/số tiền — nhưng Số Trace 1 của dòng SMF tương ứng
+        (<code>1303SMF2609030000009</code>) là <code>209326125</code> (không liên quan gì), còn
+        <b>Số Trace 2 = <code>200192551</code></b> — khớp đúng tuyệt đối. Quy tắc cũ SAI.</p>
+
+      <div class="note">EICP xác nhận không có entry nào cho SMF (<code>build_eicp_maps()</code> tra
+        <code>SMF...</code> trong "map chung hub" → 0 kết quả trên toàn batch) — nhánh loại trừ SMF
+        khỏi VLOOKUP EICP vẫn đúng, chỉ riêng phần "giữ Trace 1" là sai.</div>
+
+      <div class="label"><span class="pill pill-green">Fix</span> SMF dùng Số Trace 2 giống nhóm không chứa 'S'</div>
+      <p><code>use_trace2 = (~s_mask | smf_mask) & (trace2_raw != '')</code> thay cho
+        <code>use_trace2 = ~s_mask & (...)</code> — SMF giờ nhận Trace 2 TRƯỚC khi bước BFX/EICP chạy
+        (2 bước đó vẫn loại trừ SMF như cũ, không đụng). Rơi về Trace 1 nếu Trace 2 trống (không
+        crash, không NaN).</p>
+
+      <table>
+        <tr><th>Bước</th><th>Core "chưa khớp"</th><th>Citad khớp</th><th>Lệch TT thật so với chấm tay (số tuyệt đối trên 55.157 dòng)</th></tr>
+        <tr><td>Trước (Hub cắt cửa sổ + Trace 1)</td><td>5.641</td><td>49.407</td><td>253 dòng lệch</td></tr>
+        <tr><td>Sau bước 1 — Hub đủ 3 file (chưa sửa SMF)</td><td>156</td><td>49.514</td><td>132 dòng lệch</td></tr>
+        <tr><td>Sau bước 2 — sửa SMF Trace 2</td><td>1</td><td><b>49.644</b></td><td><b>2 dòng lệch</b></td></tr>
+      </table>
+      <p>49.644 khớp Citad = trùng khớp tuyệt đối với số liệu người chấm tay
+        (<code>kq29-3.9.xlsx</code>, cột TT đếm "citad 29-3.9" = 49.644). Còn <b>2 dòng chưa cân
+        khớp</b> — CHƯA HOÀN THIỆN, không phải "gần xong": (1) Hub trạng thái "HT lỗi" vs tay ghi
+        "chờ đi kênh"; (2) 1 dòng <code>TRTP=Cancel</code>, CRAMOUNT âm — chương trình ghi "Đã hủy",
+        tay ghi "Hoàn thành". Để nguyên cho người chấm xem xét, không tự suy diễn thêm.</p>
+
+      <p>Test mới/sửa trong <code>TestHubSmfSkipsVlookup</code> (<code>test_ilo1000_algorithm.py</code>):
+        thêm <code>test_smf_uses_trace2_when_available</code> (hành vi đúng mới), giữ
+        <code>test_smf_keeps_raw_trace1_when_trace2_missing</code> (fallback khi thiếu Trace 2, đổi
+        tên từ test cũ). 135/135 test module ILO1000 pass.</p>
+
+      <div class="caution"><b>Chưa đưa vào pipeline chính — bước "Hub đủ 3 file":</b> kết quả bàn
+        giao dùng <code>load_hub(files, ngay_ints=None)</code> (bỏ hẳn giới hạn ngày) ở script tay,
+        KHÔNG sửa <code>_osb_carryover_days()</code>/<code>pipeline.py</code> — cửa sổ carryover Hub
+        trong pipeline hiện chỉ lùi về trước (xem card 170), chưa từng tính tới ngày SAU ngày chấm dù
+        <code>process_hub()</code>'s "Chờ đi kênh" after-mask đã sẵn logic cho trường hợp đó. Cần
+        quyết định cách tổng quát hoá đúng (lùi bao xa về sau? theo file cụ thể hay theo ngày cố
+        định?) trước khi đưa vào code sản phẩm — chưa làm, chỉ mới đúng cho đúng 1 batch giao tay này.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">172</span>
+      <span class="card-title">Chấm ILO1000 — file GL02 đặt tên theo KHOẢNG ngày (16 số) chỉ đọc 8 số ĐẦU: Thứ 2 07/09 (ngày làm việc đầy đủ) mất trắng khỏi mọi file kết quả</span>
+      <span class="badge badge-info">Đã sửa detect.py + thêm test, chưa commit</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện khi</span> chạy đối chiếu real-data 2 lô 4.9 và 5-8.9.2026 với bản chấm tay của Việt</div>
+      <p>Lô 4.9 khớp sạch (103.849/103.849 dòng, key TRDATE+TRBRCD+REFERENCE+số tiền). Lô 5-8.9.2026 lần
+        chạy đầu tiên báo <b>45.705 dòng "TT LỆCH THẬT SỰ"</b> và <b>47.966 dòng "chỉ thủ công có"</b> — quá
+        lớn để là sai lệch nghiệp vụ thật, phải soi nguyên nhân trước khi coi là câu hỏi cho Việt.</p>
+
+      <div class="label"><span class="pill pill-blue">Nguyên nhân gốc</span> regex trích ngày chỉ lấy 8 số đầu, bỏ qua phần "ngày cuối"</div>
+      <p><code>group_files_by_date()</code> (<code>backend/services/ilo1000/detect.py</code>) chỉ tạo nhóm
+        ngày (khóa xử lý chính của <code>main_from_dir()</code>) từ tên file GL02/zip — không giống Citad/
+        Hub/OSB (đã biết "tên file không đáng tin", gom pool rồi lọc theo NỘI DUNG). File
+        <code>1000_gl02_2026090520260908.csv</code> có 16 số dính liền = ngày đầu <code>20260905</code> +
+        ngày cuối <code>20260908</code> ghép lại — <b>nội dung file chứa cả 4 ngày 05,06,07,08/09 trộn
+        lẫn</b> (đúng comment cũ ở <code>_filter_core_by_date()</code>/<code>_dedup_core_batch()</code> đã
+        ghi nhận cho case 2 ngày tương tự 11-12/8). Regex cũ <code>gl02[_\s](\d{8})</code> chỉ khớp 8 số
+        đầu → file này CHỈ được gán vào nhóm <code>20260905</code>. Không có file GL02/zip nào khác đặt
+        tên đúng <code>20260906</code>/<code>20260907</code> trong lô này (chỉ có
+        <code>GL02_20260908_1000.zip</code> — 1 ngày, tạo nhóm <code>20260908</code> riêng) → 2 ngày đó
+        <b>không bao giờ có nhóm để xử lý</b>: không log, không lỗi, Core của chúng lặng lẽ biến mất khỏi
+        mọi file <code>.xlsx</code> xuất ra.</p>
+
+      <div class="note">07/09/2026 là Thứ 2 — ngày làm việc đầy đủ, có phiên Citad thật (không phải cuối
+        tuần rỗng) — <b>44.641 dòng</b>, phần lớn nhất trong cả lô 4 ngày, mất trắng theo cách cũ. 06/09
+        (Chủ nhật) mất thêm 3.325 dòng.</div>
+
+      <div class="label"><span class="pill pill-green">Fix</span> trích TOÀN BỘ khoảng ngày, gán file vào MỌI nhóm trong khoảng</div>
+      <p>Thêm <code>extract_gl02_date_range()</code>: regex nới ra <code>\d{8,16}</code>; 8 số → 1 ngày
+        (hành vi cũ, không đổi); 16 số → tách ngày đầu/cuối, sinh danh sách NGÀY LIÊN TỤC từ đầu đến cuối
+        (bao gồm cả 2 đầu). <code>group_files_by_date()</code> gán file GL02/zip vào <b>từng nhóm ngày
+        trong danh sách đó</b> (trước đây chỉ 1 nhóm) — pool Citad/Hub/OSB đã gán "cho mọi nhóm ngày" ở
+        bước sau đó vẫn hoạt động đúng vì nhóm mới đã tồn tại kịp lúc. Không đụng
+        <code>_filter_core_by_date()</code>/carryover — 2 hàm đó đã đúng từ card 170, chỉ thiếu ĐẦU VÀO
+        (nhóm ngày) để chạy tới.</p>
+
+      <table>
+        <tr><th>Bước</th><th>Dòng core chương trình</th><th>Dòng core thủ công</th><th>Chỉ thủ công có (số tuyệt đối)</th></tr>
+        <tr><td>Trước (chỉ đọc 8 số đầu tên file)</td><td>62.515 (2 nhóm: 05, 08)</td><td>110.481</td><td>47.966 dòng</td></tr>
+        <tr><td>Sau (trích đủ khoảng ngày)</td><td colspan="3">đang chạy lại để xác nhận — xem báo cáo So_sanh_chenh_lech_5-8.9.xlsx</td></tr>
+      </table>
+
+      <p>Test mới <code>TestGl02DateRange</code> (<code>tests/test_ilo1000_algorithm.py</code>): tên 1
+        ngày không đổi hành vi, tên 16 số sinh đủ 4 ngày liên tục, tên không nhận dạng được trả rỗng, và 1
+        test end-to-end qua <code>group_files_by_date()</code> thật xác nhận ngày GIỮA khoảng (07/09,
+        không có file riêng) có nhóm + được gán đúng cả core lẫn citad. 126/126 test module ILO1000 pass
+        (118 cũ + 4 mới liên quan trực tiếp, không tính 4 test khác đã có sẵn từ card 170/171).</p>
+
+      <div class="caution">Chưa kiểm tra file ZIP GL02 có bao giờ đặt tên theo khoảng hay không — dữ liệu
+        thật gặp được tới nay ZIP luôn 1 ngày, CSV mới thấy dạng khoảng. Hàm dùng chung 1 regex cho cả 2
+        loại (<code>_RE_GL02_RANGE</code>) nên nếu sau này gặp ZIP dạng khoảng vẫn tự đúng, không cần sửa
+        thêm — chỉ ghi chú vì CHƯA có dữ liệu thật xác nhận trường hợp đó.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">173</span>
+      <span class="card-title">Chấm ILO1000 — pool "Core thừa"/"OSB thừa" tồn đọng XUYÊN NHIỀU BATCH (2026-09-13)</span>
+      <span class="badge badge-info">Code + test xong (177/177 pass), CHƯA commit</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> tài liệu bổ sung của người chấm Việt + mẫu chấm tay thật 09.09.2026</div>
+      <p>Trước tính năng này, <code>main_from_dir()</code> xử lý mỗi batch (1 thư mục input) hoàn
+        toàn ĐỘC LẬP — carryover chỉ trong phạm vi các ngày CÙNG batch (<code>carryover_window()</code>).
+        Tài liệu "CÁC BƯỚC LÀM ĐỐI CHIẾU ILO" mục "Tại bảng chấm" (B1-B3) + file mẫu
+        <code>Core thừa 5-8.9.xlsx</code>/<code>OSB thừa ngay 5-8.xlsx</code> cho thấy người chấm tay
+        giữ 2 pool tồn đọng SỐNG XUYÊN NHIỀU LẦN CHẤM: Core/OSB chưa kịp đi kênh ở batch cũ được nạp
+        lại làm input phụ ở batch mới, so với Citad mới; khớp thì coi là xong, không thì tiếp tục
+        mang sang batch sau nữa.</p>
+
+      <div class="label"><span class="pill pill-red">Sửa lại 1 giả định sai — kiểm bằng dữ liệu thật</span> nhãn dải ngày KHÔNG được tính từ TRDATE tồn đọng bên trong pool</div>
+      <p>Giả định ban đầu: nhãn "5-8.9" tính tự động từ min-max TRDATE có trong pool. Agent rà soát
+        (dispatch qua Agent tool) bị rate-limit ngay khi vừa chạy — tự kiểm lại trực tiếp bằng
+        <code>openpyxl</code> thay vì bỏ qua bước xác minh: <code>Core thừa 5-8.9.xlsx</code> có
+        16.658 dòng nhưng TRDATE phân bố <b>{25/08: 1, 28/08: 8, 07/09: 4, 08/09: 16.645}</b> — pool
+        đã tồn đọng qua NHIỀU lần chấm trước đó (không chỉ mới sinh từ batch 5-8/9), min-max TRDATE
+        thật sẽ ra nhãn sai "25.8-8.9". <b>Sửa lại đúng:</b> nhãn cho FILE MỚI xuất ra tính từ NGÀY
+        CỦA CHÍNH BATCH ĐANG XỬ LÝ (<code>build_pool_label()</code> trên <code>day_groups.keys()</code>);
+        nhãn hiển thị cho pool CŨ (chỉ in trên cột TT của Citad, không ảnh hưởng thuật toán khớp) lấy
+        từ TÊN FILE cũ người chấm đặt (<code>_pool_label_from_filename()</code>) — vì bản thân dữ
+        liệu bên trong pool không có cột nào lưu lại nhãn dải ngày gốc của chính nó.</p>
+
+      <div class="label"><span class="pill pill-green">Thiết kế</span> người chấm tự nạp lại file thừa cũ — không thêm cơ chế lưu trữ mới</div>
+      <table>
+        <tr><th>Việc</th><th>Chỗ code</th></tr>
+        <tr><td>Nhận dạng file pool theo NỘI DUNG (có cả cột 'TT' và 'Đối chiếu'), không theo tên file — 1 file OSB thừa thật tên bắt đầu bằng "osb" dễ bị nhầm thành OSB gốc nếu xét tên trước</td><td><code>detect.py::_sniff_pool_xlsx()</code></td></tr>
+        <tr><td>Đọc pool: tự tìm dòng header (không giả định vị trí cố định), chuẩn hoá tên cột lệch casing (dữ liệu thật dùng "map dc" chữ thường thay vì "Map dc")</td><td><code>load_pool.py</code> (module mới)</td></tr>
+        <tr><td>TT của sheet Citad (khác nghĩa TT của sheet Core): ưu tiên khớp Core hôm nay → pool Core thừa cũ → OSB hôm nay → pool OSB thừa cũ → còn lại để trống ("Citad thừa", xuất file riêng)</td><td><code>process.py::label_citad_provenance()</code></td></tr>
+        <tr><td>Điền cột 'Đối chiếu' của pool: dòng ĐÃ khớp từ trước giữ nguyên, không bị ghi đè lại '#N/A'</td><td><code>process.py::mark_pool_doi_chieu()</code></td></tr>
+        <tr><td>Pool mới mang sang batch sau = (pool cũ còn '#N/A') + (Core/OSB mới hôm nay vẫn chưa khớp gì)</td><td><code>process.py::build_core_thua_forward()</code></td></tr>
+        <tr><td>Xuất "Core thừa {nhãn}.xlsx"/"OSB thừa {nhãn}.xlsx"/"Citad thừa {ngày}.xlsx" — file đơn sheet</td><td><code>export.py::export_pool_file()</code></td></tr>
+      </table>
+
+      <div class="note">Không cần sửa API/frontend: <code>POST /api/ilo1000/start</code> đã nhận
+        <code>files: list[UploadFile]</code> bất kỳ (không lọc loại file) và <code>_run()</code> trong
+        <code>ilo1000_service.py</code> đã tự liệt kê MỌI file <code>.xlsx</code> trong
+        <code>output_dir</code> để trả về — người dùng chỉ cần thả thêm 2 file pool vào cùng lượt
+        upload như hub/citad/core/osb hiện có, không cần đổi UI.</div>
+
+      <p>28 test thuật toán thuần (process.py) + 5 test nhận dạng file (detect.py) + 6 test loader
+        (load_pool.py) + 4 test <code>used_label_map_keys</code> + 2 test tích hợp end-to-end qua
+        <code>main_from_dir()</code> thật (1 kịch bản có pool cũ được giải quyết + phát sinh pool mới,
+        1 kịch bản không có pool nào — xác nhận hành vi cũ không đổi). 178/178 test module ILO1000
+        pass, không phá test nào trong 3 fix trước đó (card 170/171/172) cũng đang nằm cùng nhánh
+        chưa commit.</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện Agent thật (2026-09-13) — 2 lỗi CÓ BẰNG CHỨNG đã sửa</span></div>
+      <p>Lượt rà soát đầu bị rate-limit (xem mục trên); thay vào đó dùng 1 lượt phản biện Agent thật
+        (tự đọc code, trích toàn văn docx, mở dữ liệu thật, tự chạy pytest — không tin số liệu tôi
+        báo) theo đúng protocol skill <code>multi-agent-command</code> (3 phán quyết ĐỒNG Ý/KHÔNG
+        ĐỒNG Ý-bằng chứng/KHÔNG ĐỒNG Ý-nghi vấn). Kết quả:</p>
+      <table>
+        <tr><th>Phát hiện</th><th>Bằng chứng</th><th>Fix</th></tr>
+        <tr><td><code>_CORE_TT_DA_XONG</code> thiếu <code>'Hoàn thành'</code></td><td>Tóm tắt TT thật ngày 09.09.2026 có 2 dòng TT='Hoàn thành' — KHÔNG xuất hiện trong pool tồn đọng cùng batch (khác 'Chờ đi kênh'/'Chờ duyệt chi trả' — 2 nhãn thô khác CÓ mặt trong pool) → nếu không sửa, 2 dòng Hub đã báo xong này sẽ bị mang nhầm vào pool "còn chờ đi kênh"</td><td>Thêm 'Hoàn thành' vào tập đã xử lý xong + ghi rõ đây là danh sách "biết tới đâu khai tới đó" cho 1 trường dữ liệu thô của Hub, có thể còn giá trị khác chưa gặp</td></tr>
+        <tr><td><code>_sniff_pool_xlsx()</code>/<code>find_pool_header_row()</code> dùng <code>openpyxl(read_only=True)</code></td><td>Skill <code>bank-reconciliation</code>: file xlsx thật xuất từ hệ thống lõi dự án có thể mang tag <code>&lt;dimension ref="A1"/&gt;</code> sai lệch — <code>openpyxl(read_only=True)</code> tin thẳng tag đó, ÂM THẦM chỉ đọc dòng đầu, không lỗi không cảnh báo (đã tái phát nhiều module đối chiếu khác của dự án)</td><td>Đổi sang <code>pd.read_excel(engine='calamine')</code>, nhất quán với <code>load_pool.py</code> đã đúng từ đầu</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Nghi vấn CHƯA đóng hẳn — cần Việt xác nhận, không phải lỗi code</span></div>
+      <p><b>Thứ tự ưu tiên OSB hôm nay vs pool OSB thừa cũ</b> (mục B phản biện): docx B1 chỉ mô tả 3
+        bước VLOOKUP (Core hôm nay → Core thừa → "OSB (T,T-1)" — coi OSB mới/cũ là 1 bước gộp), trong
+        khi code tách thành 2 mức ưu tiên riêng (<code>osb_today_label_map</code> trước
+        <code>osb_pool_label_map</code>). Dữ liệu mẫu (<code>Cham OSB</code>) không có case trùng khoá
+        giữa 2 nhóm để kiểm chứng đúng/sai thứ tự — rủi ro CHỈ xảy ra khi 1 khoá Map dc trùng khớp
+        giữa OSB hôm nay và OSB pool cũ (xác suất cực thấp, cùng bản chất rủi ro trùng khoá đã chấp
+        nhận ở toàn hệ thống — xem mục C dưới), không sửa vì chưa có bằng chứng đủ mạnh để đổi.</p>
+      <p><b>Trùng khoá Map dc trong pool</b> (mục C): nếu 2 dòng pool khác nhau tình cờ trùng Map dc,
+        cả hai cùng bị đánh dấu khớp bởi 1 dòng Citad. Đây LÀ rủi ro có thật nhưng KHÔNG MỚI — toàn bộ
+        hệ thống (Core/Citad/Hub) đã chấp nhận rủi ro trùng khoá này từ trước (<code>_first_match()</code>
+        "giữ lần đầu tiên" kiểu VLOOKUP) mà chưa có lưới an toàn nào; pool chỉ kéo dài thời gian tồn
+        tại của khoá nên xác suất trùng tăng nhẹ, không phải lỗ hổng riêng của tính năng này.</p>
+      <p><b>File cùng workbook nhiều sheet</b> (mục H): file "OSB thừa" thật có 2 sheet (pool gốc +
+        "Cham OSB" đã đối chiếu) — <code>_sniff_pool_xlsx()</code> chỉ soi sheet đầu tiên. Đã tự đóng
+        nghi vấn này: nếu người dùng lỡ nạp nhầm sheet "đã chấm" (có Đối chiếu đã điền ngày) làm pool
+        đầu vào, <code>build_core_thua_forward()</code> vẫn lọc đúng theo trạng thái Đối chiếu của
+        TỪNG DÒNG — dòng đã khớp bị loại, dòng chưa khớp (nếu có) vẫn mang tiếp đúng như thiết kế; hệ
+        thống tự phục hồi đúng, không cần sửa thêm.</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện VÒNG 2 (2026-09-13) — 1 lỗi NGHIÊM TRỌNG tìm được + tái lập bằng code thật</span></div>
+      <p>Theo yêu cầu người dùng (rủi ro cao, cần thêm 1 lượt trước khi commit), chạy vòng 2 độc
+        lập với vòng 1 (agent không có bối cảnh vòng trước, tự đọc lại code+docx+dữ liệu từ đầu).
+        Tự chạy pytest xác nhận 178/178 tại thời điểm đó.</p>
+      <table>
+        <tr><th>Phát hiện</th><th>Bằng chứng</th><th>Fix</th></tr>
+        <tr><td><b><code>build_core_thua_forward()</code> làm MẤT TOÀN BỘ pool ngay từ round đầu tiên</b></td><td>Khi <code>old_pool_df</code> rỗng (chưa có pool cũ — đúng trạng thái LẦN ĐẦU bật tính năng), kết quả trả về THIẾU HẲN cột 'Đối chiếu' (vì dòng leftover mới từ <code>process_core()</code>/OSB thô chưa từng có cột này). Tái lập bằng code thật: file pool tự xuất ra ở round đó bị chính <code>detect_file_type()</code> trả về <code>'unknown'</code> ở round SAU (đòi hỏi có cột 'Đối chiếu') — toàn bộ tồn đọng round 1 lặng lẽ biến mất, không log không lỗi. Test cũ (<code>test_old_pool_none_only_new_leftover</code>) vô tình né đúng chỗ này (dữ liệu test cũng thiếu cột) nên xanh mà không phát hiện được — đúng mẫu "unit test pass, real end-to-end khác" skill <code>bank-reconciliation</code> đã cảnh báo.</td><td>Bắt buộc cột 'Đối chiếu' luôn có mặt trong kết quả (mặc định '#N/A' nếu thiếu/rỗng). Thêm test tái lập trực tiếp lỗi cũ + 1 test end-to-end qua <code>main_from_dir()</code> thật kiểm file tự xuất ra được <code>detect_file_type()</code> nhận lại đúng ở round sau.</td></tr>
+        <tr><td>Docstring <code>label_citad_provenance()</code> tuyên bố sai "đúng thứ tự ưu tiên B1 tài liệu gốc" cho cả 4 bước</td><td>Đọc lại toàn văn docx: chỉ (1)→(2) (Core hôm nay → Core thừa) có căn cứ rõ trong B1. Bước OSB hôm nay/pool OSB cũ: docx mô tả DÁN GỘP 2 nguồn vào 1 sheet rồi Vlookup 1 LẦN DUY NHẤT, không tách 2 mức ưu tiên như code. Kiểm dữ liệu mẫu <code>Cham OSB</code>: 0 khóa Map dc trùng giữa 2 nhóm — thứ tự code chọn CHƯA từng ảnh hưởng kết quả thật, nhưng phát biểu "đúng tài liệu gốc" là sai</td><td>Sửa lại docstring: chỉ khẳng định (1)→(2) đúng tài liệu, thứ tự (3)/(4) ghi rõ là LỰA CHỌN CỦA CODE chưa được Việt xác nhận — đã đưa vào câu hỏi A2 gửi Việt</td></tr>
+      </table>
+      <p>181/181 test pass sau fix (178 + 3 test mới trực tiếp bắt lỗi cột 'Đối chiếu' thiếu).
+        <b>Đây là lý do thực tế nên chạy phản biện vòng 2</b> — lỗi này sẽ chỉ lộ ra ở LẦN THỨ HAI
+        chạy thật với pool tự sinh từ chính pipeline (không phải khi test bằng file pool tự viết tay
+        như vòng 1 làm), đúng kịch bản triển khai thật đầu tiên của Việt.</p>
+
+      <div class="label"><span class="pill pill-green">Việt trả lời trực tiếp 4 câu hỏi (2026-09-13) — 1 câu ĐẢO NGƯỢC lại quyết định trước đó</span></div>
+      <table>
+        <tr><th>Câu hỏi</th><th>Trả lời Việt</th><th>Kết quả</th></tr>
+        <tr><td>A1 — định dạng nhãn "OSB {ngày}.{tháng}"</td><td>"để định dạng theo máy OSB 9.9 cũng được"</td><td>Giữ nguyên nhãn sạch code đang dùng, không đổi gì</td></tr>
+        <tr><td>A2 — thứ tự ưu tiên OSB hôm nay/pool cũ khi trùng</td><td>Va chạm này CÓ THẬT xảy ra (đặc biệt khi chấm gộp 2 ngày) — xử lý bằng cách kiểm tổng số món + tổng tiền sau mỗi bước map, lệch thì tìm nguyên nhân, không có luật "ai thắng" cố định</td><td>Không thêm code tự động chọn — giữ nguyên cơ chế Tổng hợp số món/tiền đã có ở sheet Tóm tắt làm điểm kiểm tra thủ công; đã sửa docstring không tuyên bố sai "đúng tài liệu gốc" (xem mục Phản biện vòng 2 ở trên)</td></tr>
+        <tr><td>A3 — xác nhận cơ chế nạp lại pool tay</td><td>"ý đầu đúng"</td><td>Xác nhận đúng thiết kế hiện tại</td></tr>
+        <tr><td><b>A4 — danh sách Hub coi là "đã xong"</b></td><td>"Hoàn thành" phản ánh THỜI ĐIỂM TRA CỨU, không phải thời điểm đang chấm — 1 giao dịch "chờ đi kênh" của ngày T, nếu tra muộn 1-2 ngày, Hub tự báo "Hoàn thành" dù KHÔNG đi kênh đúng ngày T</td><td><b>ĐẢO NGƯỢC lại fix của phản biện vòng 1</b> — gỡ 'Hoàn thành' khỏi <code>_CORE_TT_DA_XONG</code>, quay về chỉ 4 giá trị {Hủy, Đã hủy, quyết toán, OSB}. Xem mục "Bài học" bên dưới.</td></tr>
+      </table>
+
+      <div class="note"><b>Bài học quan trọng:</b> phản biện vòng 1 suy diễn "Hoàn thành = đã xong" từ
+        việc 2 dòng 'Hoàn thành' KHÔNG xuất hiện trong 1 mẫu pool CỦA BATCH KHÁC — bằng chứng gián
+        tiếp, không đủ mạnh. Việt xác nhận trực tiếp NGƯỢC LẠI: "nếu chấm hàng ngày, sáng tra dữ liệu
+        ngay thì ít tình trạng lung tung; để 1-2 ngày mới tra thì 'chờ đi kênh' sẽ tự chuyển thành
+        'hoàn thành'" — tức Trạng thái Hub không phải ảnh chụp tại ngày đang chấm, mà là ảnh chụp tại
+        THỜI ĐIỂM TRA CỨU. Đúng bài học <code>SKILL.md</code>: không suy diễn ý nghĩa 1 giá trị dữ
+        liệu thô từ mẫu nhỏ khi có thể hỏi trực tiếp người sở hữu nghiệp vụ.</div>
+
+      <div class="label"><span class="pill pill-gray">Mở thêm, CHƯA code — chờ Việt xác nhận tiếp (không phải lỗi)</span></div>
+      <p><b>'Đã hủy' cũng có thể cần xem lại tương tự:</b> Việt — "nhiều khi tổng Đã hủy không bằng
+        0, nếu làm luôn [cùng ngày] thì dễ [nét về 0], còn làm sau có thể 2-3 ngày sau mới hủy của
+        ngày trước. Tổng không bằng 0 cũng phải tìm [nguyên nhân]. Còn nếu tổng bằng 0 thì không
+        phải theo dõi." → gợi ý 1 dòng 'Đã hủy' riêng lẻ chưa chắc "xong" nếu group (REFERENCE,
+        TRBRCD) của nó chưa net về 0 trong toàn cảnh nhiều ngày — <code>detect_huy()</code> hiện tại
+        gán 'Đã hủy' cho MỌI trường hợp net-zero thất bại trong batch (kể cả thiếu hẳn vế đối ứng),
+        không phân biệt "đã net xong ở batch sau" vs "còn treo thật". Việt tự nhận sẽ xem lại danh
+        sách trạng thái "không cần theo dõi" và báo thêm — CHƯA SỬA CODE, chờ xác nhận.</p>
+      <p><b>Giải thích thêm cho câu hỏi B4</b> (1 ca Core âm tiền nhưng Hub báo "Hoàn thành"): Việt —
+        "là tình trạng hủy ngày cũ và đi lại. Món đi lại trên Citad lại không dùng trace mới mà dùng
+        trace hủy nên đã hủy 1 số món đang bị tình trạng vậy." → khi 1 lệnh bị hủy rồi GỬI LẠI, lệnh
+        gửi lại đôi khi TÁI SỬ DỤNG trace của lệnh đã hủy (không cấp trace mới) — khiến
+        <code>detect_huy()</code> (khớp theo REFERENCE+TRBRCD) nhìn nhầm thành 1 nhóm net-zero/hủy,
+        che mất giao dịch gửi-lại thật sự đang chờ xử lý. Việt hẹn mang dữ liệu thật cho xem cụ thể
+        Thứ 2 (15/09/2026) — CHƯA đủ thông tin để sửa code, cần ví dụ thật trước.</p>
+      <p><b>"Hub thừa" (pool tồn đọng cho chính Hub, không chỉ Core/OSB):</b> Việt: "từ trước chị
+        chưa làm hub tồn... bảng của chị chủ yếu chấm Core và Citad, Hub để map cái chung cho 2 bảng
+        kia... Nếu để hub thừa được thì tốt." → Ý TƯỞNG MỚI, không phải yêu cầu chắc chắn — Hub trong
+        thiết kế hiện tại chỉ là bảng tra cứu trung gian (đội trực khác đã tự chấm riêng Hub↔Citad
+        hàng ngày), không phải đối tượng đối chiếu chính của bảng Việt. KHÔNG làm trong đợt này —
+        Việt tự nhận sẽ nghĩ thêm.</p>
+
+      <div class="label"><span class="pill pill-red">Chạy thật trên dữ liệu 09/09/2026 (2026-09-14) — 2 lỗi cửa sổ Hub tìm được + sửa, kết quả cuối chỉ còn 5/70.434 dòng lệch</span></div>
+      <p>Chạy <code>main_from_dir()</code> thật trên bộ dữ liệu gốc 09/09/2026 (không phải test tổng
+        hợp) — nhân tiện điều tra khiếu nại của Việt về "bảng Core thiếu dữ liệu" ở batch 10/09/2026
+        (số liệu Core không hề mất dòng nào — 157.912 dòng thô GL02 lọc đúng còn 78.715, khớp cả CSV
+        lẫn ZIP; vấn đề là 18.812/78.715 dòng không tìm được trạng thái vì thiếu Hub/Citad của ngày
+        sau). Cùng nguyên nhân gốc lộ ra khi so 09/09 với bản tay Việt:</p>
+      <table>
+        <tr><th>Vòng</th><th>Core "chưa khớp" (trên 70.434 dòng)</th><th>Nguyên nhân + fix</th></tr>
+        <tr><td>Trước (Hub chỉ T-1/T)</td><td>14.345</td><td>—</td></tr>
+        <tr><td>Sau fix 1</td><td>27</td><td><b>Hub thiếu cửa sổ T+1</b> — so Hub sheet 2 bên: bản tay có thêm 14.566 dòng Hub ngày 10/09 khi chấm ngày 09/09, chương trình chỉ nạp T-1/T. Thêm <code>_hub_forward_window()</code>/<code>_hub_carryover_days()</code> (<code>pipeline.py</code>) — mở thêm đúng 1 ngày về sau (T+1, mở rộng qua ngày nghỉ nếu có), CHỈ áp dụng cho Hub (Citad/OSB giữ nguyên).</td></tr>
+        <tr><td>Sau fix 2</td><td><b>0</b></td><td><b>Dòng Hub 'Ngày giờ kênh trả' RỖNG bị lọc mất vĩnh viễn</b> — lệnh CHƯA từng đi kênh (VD 'Chờ duyệt chi trả') không có ngày nào để so khớp cửa sổ, nên bị loại dù mở cửa sổ rộng tới đâu. Xác nhận: 962/129.858 dòng Hub thuộc loại này — đúng bằng phần lệch còn lại sau fix 1. Sửa <code>load_hub()</code>: luôn giữ dòng có ngày rỗng, bất kể `ngay_ints`. Tổng Hub nạp được sau cả 2 fix: <b>129.858 — khớp CHÍNH XÁC</b> tổng Hub của bản tay Việt.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Kết quả cuối — so trực tiếp theo Map dc với bản tay Việt (09/09/2026)</span></div>
+      <p><b>Core: 70.434/70.434 dòng khớp đúng danh tính (100%), chỉ còn 5 dòng lệch trạng thái</b> —
+        cả 5 đều thuộc đúng hiện tượng B4 Việt đã giải thích trước đó (lệnh hủy rồi gửi lại nhưng tái
+        dùng trace cũ): chương trình gán 'Đã hủy' (đúng theo net-zero/CRAMOUNT âm), bản tay để RỖNG
+        (còn theo dõi tiếp). Việt hẹn mang ví dụ thật Thứ 2 15/09 — CHƯA sửa <code>detect_huy()</code>,
+        đang chờ, đúng dự kiến từ trước khi tìm ra 5 dòng lệch này.</p>
+      <p><b>Citad — nhãn "Core 5-8.9" (pool tồn đọng) khớp TUYỆT ĐỐI 16.583/16.583 dòng</b> với bản tay
+        — xác nhận tính năng pool hoạt động đúng trên dữ liệu thật. Citad thừa: 43 dòng (chương
+        trình) so với 4 dòng (bản tay) — CHÊNH LỆCH DO THIẾU INPUT, không phải lỗi thuật toán: bộ dữ
+        liệu 09/09 dùng để chạy KHÔNG CÓ file OSB thật của chính ngày 09/09 (log "OSB 0"), trong khi
+        bản tay có 40 dòng khớp "OSB 20260909.9" — số 43-4=39 rất gần 40, gợi ý phần lớn 43 dòng thừa
+        sẽ tự khớp nếu có đủ file OSB đầu vào.</p>
+      <p>Đã ghi 2 file vào <code>G:\Cham ILO1000\9.9.2026\Kết quả\</code>: <code>rerun_pool_2026-09-14\20260909.xlsx</code>
+        (kết quả chạy lại) và <code>So_sanh_chenh_lech_9.9_pool_2026-09-14.xlsx</code> (chi tiết 5 dòng
+        lệch). Đã dọn sạch 2 file pool copy tạm khỏi thư mục <code>du lieu</code> gốc sau khi chạy
+        xong (không để lại dấu vết trong dữ liệu thật của Việt).</p>
+      <p>187/187 test module ILO1000 pass sau cả 2 fix (thêm 6 test: 3 cho cửa sổ Hub T+1, 1 cho
+        dòng Hub ngày rỗng, cộng 2 test đã có từ trước).</p>
+
+      <div class="label"><span class="pill pill-gray">Cần xác nhận thêm trước khi mở PR</span></div>
+      <p>Đây LÀ thay đổi thuật toán khớp giao dịch rủi ro cao (khoá Map dc, thứ tự ưu tiên TT, danh
+        sách trạng thái coi là "đã xong", cửa sổ ngày Hub) theo đúng phân loại
+        <code>docs/CHECKLIST-TRUOC-KHI-MO-PR.md</code> mục I — đã có 2 lượt phản biện Agent thật
+        (Sonnet mặc định, không phải Opus/ultra) + 1 lượt xác nhận nghiệp vụ trực tiếp từ Việt + 1
+        lượt chạy thật trên dữ liệu 09/09/2026 (kết quả: 5/70.434 dòng Core lệch, đã giải thích được
+        nguyên nhân). Còn treo: 5 dòng lệch 'Đã hủy' (chờ ví dụ thật Việt mang Thứ 2 15/09), và câu
+        hỏi B4/Đã hủy/Hub thừa đã gửi Việt vẫn CHƯA có câu trả lời cuối. Người dùng chưa cho phép
+        commit — chờ xác nhận cuối cùng.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">174</span>
+      <span class="card-title">Chấm ILO1000 — file OSB gốc IPCAS luôn bị bỏ qua vì tên file, sửa nhận diện theo nội dung (2026-09-16)</span>
+      <span class="badge badge-done">Code + test xong (195/195 pass), xác nhận trên dữ liệu thật</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân gốc</span> <code>detect_file_type()</code> chỉ nhận OSB theo TÊN file</div>
+      <p>Việt cung cấp 1 file OSB thật (bảng 510202, xuất từ IPCAS) đặt trong thư mục input batch
+        <code>12-14.9.2026</code>. Kiểm tra: mọi lần chạy thật từ 9.9 → 15.9.2026 đều nạp được
+        <b>0 dòng OSB</b> — không phải do cấu trúc file sai, mà vì <code>detect_file_type()</code>
+        chỉ nhận diện 1 file <code>.xlsx</code> là loại <code>'osb'</code> khi TÊN bắt đầu bằng
+        "osb". File IPCAS xuất ra tên <code>DULIEUCHITIETHACHTOAN_&lt;ngày&gt;&lt;giờ&gt;_&lt;hash&gt;-phuongnguyenthi6.xlsx</code>
+        — không bao giờ khớp — bị <code>group_files_by_date()</code> log
+        <code>[SKIP] Không nhận dạng được</code> và loại hoàn toàn.</p>
+      <p>Cấu trúc bên trong file thật khớp ĐÚNG 100% với những gì <code>load_osb.py</code>/
+        <code>config.py</code> đã mong đợi (tự mở file thật bằng openpyxl xác nhận trực tiếp,
+        không chỉ tin agent) — không cần đổi công thức khoá, sheet name, hay vị trí header, CHỈ
+        cần sửa nhận diện.</p>
+
+      <div class="label"><span class="pill pill-blue">Quy trình</span> tổng chỉ huy Agent — 2 vòng khảo sát, 1 thiết kế, 1 phản biện, 1 builder</div>
+      <p>Theo đúng yêu cầu người dùng: 2 Explore agent song song (đọc toàn văn tài liệu "hướng dẫn
+        có bổ sung" + mở trực tiếp file OSB thật; khảo sát toàn bộ luồng OSB trong code hiện tại)
+        → 1 Plan agent thiết kế chi tiết → 1 agent phản biện độc lập soi lại thiết kế → tự đóng 1
+        nghi vấn còn treo (tên sheet thật) bằng cách tự mở file → viết plan cuối, xin duyệt → giao
+        1 builder agent code + test → tự đọc lại toàn bộ code + tự chạy test độc lập → giao agent
+        chạy thật trên dữ liệu G: (2 lần bị rate-limit/rớt ổ G:, tự chạy thay khi cần) → tự verify
+        số liệu trước/sau.</p>
+      <p><b>Phát hiện quan trọng nhất — tài liệu "hướng dẫn có bổ sung" không mô tả gì mới:</b> nội
+        dung OSB trong đó trùng với tài liệu gốc đã đọc trước đây, không hề nhắc tên file
+        <code>DULIEUCHITIETHACHTOAN...</code>. "Bổ sung" thực chất là Việt CUNG CẤP FILE THẬT lần
+        đầu, không phải hướng dẫn mới.</p>
+      <p><b>Builder agent tự phát hiện + sửa thêm 1 vấn đề ngoài thiết kế gốc</b> (đúng phạm vi,
+        không tự ý mở rộng ra <code>load_osb.py</code>): file OSB thật có <b>2 sheet</b>
+        (<code>Config</code> — bảng chú giải mã, KHÔNG có header thật — đứng TRƯỚC <code>Sheet 1</code>
+        — chứa header thật). Thiết kế gốc dùng <code>_scan_first_rows()</code> mặc định quét sheet
+        đầu tiên (index 0) sẽ luôn đọc nhầm <code>Config</code>, không bao giờ nhận ra được. Sửa:
+        thêm tham số <code>sheet_name</code> cho <code>_scan_first_rows()</code>,
+        <code>_sniff_osb_xlsx()</code> quét đúng sheet <code>_SHEET_NAME</code> ('Sheet 1', import
+        read-only từ <code>load_osb.py</code>) trước, rơi về sheet 0 nếu không có. Đã tự thêm 1 test
+        riêng (<code>test_config_sheet_before_sheet1_still_detected</code>) khoá đúng chỗ này — các
+        test khác của builder đều dùng fixture 1-sheet nên không bắt được lỗi này, chỉ lộ ra khi
+        verify trên dữ liệu thật.</p>
+
+      <table>
+        <tr><th>Thay đổi</th><th>Chi tiết</th></tr>
+        <tr><td><code>detect.py::_sniff_osb_xlsx()</code> (mới)</td><td>Nhận OSB theo nội dung — đủ 2 cột <code>OSB_COL_MA_GD</code>/<code>OSB_COL_CN_THUC_HIEN</code>, so khớp không phân biệt hoa/thường/khoảng trắng (dự án đã 2 lần gặp thật lệch casing tên cột — 'map dc'/'Map dc', 'Cham'/'Đối chiếu')</td></tr>
+        <tr><td><code>detect_file_type()</code></td><td>Gọi <code>_sniff_osb_xlsx()</code> ngay sau <code>_sniff_pool_xlsx()</code>, TRƯỚC rule cũ <code>startswith('osb')</code> — rule cũ GIỮ NGUYÊN làm fallback (file lỗi không đọc được, 3 file mẫu tay cũ trong <code>G:\Cham ILO1000\OSB\</code>)</td></tr>
+        <tr><td><code>_scan_first_rows()</code></td><td>Thêm tham số <code>sheet_name=0</code> (không đổi hành vi mặc định của <code>_sniff_pool_xlsx()</code>/<code>find_pool_header_row()</code>)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-gray">Cố ý KHÔNG làm trong đợt này</span></div>
+      <p><code>build_osb_key()</code> gọi <code>doc_so_tien()</code> (raise khi số tiền lạ) không có
+        try/except bao quanh trong <code>pipeline.py::_run_one_day()</code> — 1 dòng OSB số tiền lạ
+        sẽ crash job của cả ngày đó. Đã kiểm tra <code>backend/services/ach/so_tien.py</code> toàn
+        bộ: không có biến thể "không raise" nào có sẵn. Hành vi này NHẤT QUÁN với toàn dự án
+        (Core/Citad cũng crash job kiểu này) — không phải lỗ hổng riêng OSB. Sửa đúng cách (cô lập
+        lỗi theo nguồn/ngày) là thay đổi kiến trúc rộng hơn, và "bỏ qua dòng lỗi" là thay đổi
+        business rule cần Business Owner xác nhận — tách việc riêng, không làm ở đây.</p>
+
+      <div class="label"><span class="pill pill-green">Xác nhận trên dữ liệu thật — batch 12-14.9.2026</span></div>
+      <p>Chạy lại đúng batch đã từng chạy trước fix (khi đó OSB nạp 0 dòng), tự đọc lại file kết quả
+        so trực tiếp trước/sau (không chỉ tin agent báo):</p>
+      <table>
+        <tr><th>Chỉ tiêu</th><th>Trước fix</th><th>Sau fix</th></tr>
+        <tr><td>Sheet <code>osb</code> — tổng dòng</td><td>0</td><td><b>176</b></td></tr>
+        <tr><td>Citad TT bắt đầu <code>"OSB "</code> (khớp OSB thật)</td><td>21 (chỉ từ pool cũ 11.9)</td><td><b>175</b></td></tr>
+        <tr><td>Citad thừa (TT rỗng, không khớp gì)</td><td>155</td><td><b>1</b></td></tr>
+      </table>
+      <p>195/195 test module ILO1000 pass. Không đụng <code>load_osb.py</code>/<code>build_osb_key()</code>
+        — chỉ sửa 2 file <code>detect.py</code> + <code>tests/test_ilo1000_algorithm.py</code>.</p>
+
+      <div class="label"><span class="pill pill-gray">Câu hỏi mở, không chặn việc code</span></div>
+      <p>File <code>DULIEUCHITIETHACHTOAN...</code> sẽ được Việt cung cấp CHỦ ĐỘNG cho mọi batch
+        tương lai, hay chỉ bổ sung 1 lần cho batch 12-14.9? Không ảnh hưởng cách code (detect theo
+        nội dung đúng cả 2 trường hợp), chỉ ảnh hưởng mức cần theo dõi nếu 1 batch sau lại thiếu.</p>
+
+      <p><b>Sự cố hạ tầng trong lúc làm (không liên quan code):</b> ổ G: rớt kết nối giữa chừng 2
+        lần khi đang chạy verify thật (giống sự cố ngày 2026-09-14) — 1 lần agent tự phát hiện đúng
+        bằng chứng (Get-Volume/Get-PSDrive/net use đều xác nhận ổ biến mất), không tự đoán/sửa gì,
+        báo lại đúng và chờ. Agent phản biện cũng bị rate-limit 1 lần ("session limit") — tự chạy
+        thay khi cần, đúng tinh thần đã áp dụng từ 2026-09-13.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">175</span>
+      <span class="card-title">Chấm ILO1000 — cảnh báo giả "thiếu EICP T-1" khi EICP T-1 chỉ được gán qua fallback theo tên file (2026-09-21)</span>
+      <span class="badge badge-done">Code + test xong (196/196 pass), xác nhận trên dữ liệu thật 18.9.2026</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân gốc</span> 2 cơ chế trong <code>group_files_by_date()</code> không nói chuyện với nhau</div>
+      <p>Phát hiện khi chạy thật batch <code>G:\Cham ILO1000\18.9.2026</code> (batch chỉ gửi 1 ngày, không
+        có Core/GL02 riêng cho T-1 vì 17/9 đã chấm ở lần trước — chỉ còn <code>Core thừa 17.9.xlsx</code>/
+        <code>OSB thừa 17.9.xlsx</code> nạp lại làm pool tồn đọng). File <code>eicp 17.09.XLS</code> — theo
+        người dùng xác nhận chứa cả dữ liệu 17/9 lẫn 18/9 — không khớp được nhóm ngày nào (không có nhóm
+        <code>20260917</code> trong batch), nên rơi vào nhánh fallback "gán vào nhóm có đủ citad+core nhất"
+        (dòng ~398-407, đã có từ trước) — dữ liệu ĐƯỢC gộp đúng vào nhóm <code>20260918</code>. Nhưng bước
+        sau đó, <code>merge_previous_day_eicp()</code>, kiểm tra hoàn toàn độc lập: chỉ hỏi "nhóm khoá
+        <code>20260917</code> có tồn tại trong <code>groups</code> và có <code>eicp</code> không?" — không
+        biết bước fallback đã xảy ra — nên vẫn in <code>CẢNH BÁO — thiếu EICP T-1</code> dù dữ liệu đã có
+        mặt 100% trong <code>eicp_df</code> của ngày 18/9 (<code>load_eicp()</code> đọc toàn bộ nội dung
+        file, không lọc theo cột ngày nào cả).</p>
+      <p><b>Không phải lỗi mất dữ liệu</b> — xác nhận qua đọc code trực tiếp, không suy diễn: cảnh báo chỉ
+        gây hiểu lầm, số liệu ra báo cáo không đổi trước/sau fix.</p>
+
+      <div class="label"><span class="pill pill-blue">Sửa</span> theo dõi ngày đã gán qua fallback, truyền xuống 2 hàm cảnh báo</div>
+      <table>
+        <tr><th>Thay đổi</th><th>Chi tiết</th></tr>
+        <tr><td><code>group_files_by_date()</code></td><td>Xây <code>eicp_fallback_days: dict[str, set[int]]</code> — {nhóm đích: {số ngày (DD) đã gán vào đây qua fallback}} — khi gán EICP không khớp ngày nào vào <code>best_group</code></td></tr>
+        <tr><td><code>merge_previous_day_eicp()</code></td><td>Thêm tham số <code>eicp_fallback_days</code> (mặc định <code>None</code>) — nếu ngày T-1 nằm trong set của nhóm T, log 1 dòng xác nhận "đã có sẵn qua fallback" thay vì cảnh báo thiếu</td></tr>
+        <tr><td><code>merge_monday_carryover()</code></td><td>Cùng tham số, cùng logic cho từng ngày trong cửa sổ carryover (không chỉ riêng T-1) — cùng lỗ hổng có thể xảy ra ở đây</td></tr>
+      </table>
+      <p>Chỉ đổi CÂU LOG, không đụng <code>load_eicp()</code>/<code>eicp_df</code>/logic khớp Trace — số liệu
+        chạy thật batch 18.9.2026 giữ nguyên y hệt trước/sau: HUB 101.817 · CITAD 47.912 · EICP 40.760 ·
+        OSB 69 · CORE 47.114 dòng, khớp citad/hub 47.114/47.114 (0 chưa khớp), Citad thừa 1.</p>
+
+      <div class="label"><span class="pill pill-gray">Điểm mù thiết kế rộng hơn — chưa sửa, chỉ ghi nhận</span></div>
+      <p>Citad được gán <b>số dòng bằng nhau</b> cho MỌI nhóm ngày trong batch (pool chung, lọc theo
+        TRX_DATE lúc xử lý) nên khi batch có ≥2 nhóm ngày, <code>best_group</code> (chọn theo
+        <code>len(citad)+len(core)</code>) sẽ tie-break gần như hoàn toàn theo <code>len(core)</code> — có
+        thể chọn nhầm nhóm nếu nhóm đúng (nơi EICP T-1 thật sự thuộc về) không phải nhóm có Core nhiều nhất.
+        Batch 18.9.2026 chỉ có 1 nhóm nên không xảy ra ở đây. Chưa có ví dụ dữ liệu thật để xác nhận rủi ro
+        này có xảy ra không — không tự sửa khi chưa có bằng chứng cụ thể.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">176</span>
+      <span class="card-title">Chấm ILO1000 — Trace Hub trùng ≥2 giao dịch khác nhau, thêm khoá phụ Số tiền rồi mã chi nhánh (2026-09-23/24)</span>
+      <span class="badge badge-done">Code + test xong (236/236 pass, sau đó 251/251 gộp việc kế tiếp), phản biện B10 ĐỒNG Ý, ĐÃ COMMIT d9b89d0</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân gốc</span> <code>_first_match()</code> giữ "dòng đầu theo thứ tự file" khi Trace trùng — đúng VLOOKUP Excel nhưng có thể sai</div>
+      <p>Hub xuất ra có thể chứa <b>≥2 dòng khác nhau cùng 1 giá trị Trace</b> (khác số tiền, khác
+        khách hàng, khác trạng thái) — batch thật 29/8-3/9/2026 (132.401 dòng Hub) có <b>38 nhóm/76
+        dòng</b> rơi vào tình huống này. 3 dict tra cứu cũ (<code>stc_to_trace</code>/
+        <code>trace_trangthai</code>/<code>trace_sotien</code>, xây bằng <code>_first_match()</code>)
+        chỉ giữ được DÒNG ĐẦU theo thứ tự file — đúng hành vi VLOOKUP của Excel, nhưng không đảm bảo
+        đúng giao dịch. Ca thật <code>REFERENCE 1000API141779571</code>: Hub có dòng 10.000đ/"HT lỗi"
+        đứng TRƯỚC dòng 1.000.000đ/"Chờ đi kênh" cùng Trace <code>141779571</code> — Core có
+        <code>CRAMOUNT = 1.000.000</code>, đáng lẽ khớp đúng dòng thứ 2, nhưng chương trình giữ nhầm
+        dòng đầu ("HT lỗi").</p>
+
+      <div class="label"><span class="pill pill-blue">Xác nhận nghiệp vụ (Việt)</span> khoá phụ Số tiền trước, mã chi nhánh phát lệnh sau — CHỈ áp trong nhóm Trace trùng</div>
+      <p>Khi Trace trùng: lọc tiếp bằng <b>Số tiền</b> (so <code>CRAMOUNT</code> Core với "Số tiền
+        thực chuyển" Hub) trước; nếu vẫn còn ≥2 ứng viên mới lọc thêm bằng <b>mã chi nhánh phát
+        lệnh</b> (so <code>TRBRCD</code> Core với cột <code>Chi nhánh</code> Hub). Áp dụng ĐÚNG cho
+        các dòng thuộc nhóm Trace trùng — không đưa Số tiền/chi nhánh vào khoá tra cứu của MỌI giao
+        dịch "cho nhất quán" (sẽ đổi hành vi của hàng trăm nghìn dòng KHÔNG liên quan).</p>
+      <p><b>Phát hiện khi khảo sát (B0), sửa nghi vấn ban đầu của kế hoạch:</b> pHub <b>CÓ SẴN cột
+        <code>Chi nhánh</code></b> (VD giá trị <code>"1000"</code>) — không cần suy ra từ tiền tố 4
+        ký tự đầu của <code>Số giao dịch</code> như giả thuyết ban đầu (độ tin cậy trung bình lúc lập
+        kế hoạch, chưa mở được file thật). Tự mở file pHub thật xác nhận trực tiếp trước khi code.</p>
+
+      <table>
+        <tr><th>Thay đổi</th><th>Chi tiết</th></tr>
+        <tr><td><code>config.py</code></td><td>Thêm <code>HUB_COL_CHI_NHANH = 'Chi nhánh'</code>, đưa vào <code>HUB_COLS_KEEP</code>/<code>HUB_COL_RENAME</code></td></tr>
+        <tr><td><code>process.py::process_hub()</code></td><td>Thêm <code>lookups['trace_trung']</code> ({<code>keys</code>, <code>theo_tien</code>, <code>theo_tien_cn</code>, <code>ung_vien</code>}) — CHỈ build cho nhóm Trace trùng; 3 dict cũ giữ nguyên 100% code cũ</td></tr>
+        <tr><td><code>process.py::_first_match_unique()</code> (mới)</td><td>Khác <code>_first_match()</code>: khoá xuất hiện ≥2 lần bị LOẠI HẲN (không đoán đại "dòng đầu") — xem mục "Quyết định lệch kế hoạch" dưới</td></tr>
+        <tr><td><code>process.py::_khop_trace_trung()</code> (mới, hàm thuần)</td><td>Chọn đúng dòng Hub theo Số tiền rồi chi nhánh; trạng thái/số tiền LUÔN lấy từ CÙNG 1 dòng Hub đã chọn (tránh bước 3 và bước 4 chọn nhầm 2 dòng khác nhau)</td></tr>
+        <tr><td><code>process.py::process_core()</code></td><td>Sau bước 3/4 gốc (giữ nguyên), ghi đè TT CHỈ tại các dòng Trace ∈ nhóm trùng VÀ thuộc đúng phạm vi bước 3/4 vừa xử lý (<code>mask_truoc_hub</code>) — không đụng dòng đã xử lý ở bước Hủy/Quyết toán/OSB/Citad</td></tr>
+        <tr><td><code>pipeline.py::_run_one_day()</code></td><td>Thêm 1 dòng log tổng hợp: số nhóm Trace trùng + số dòng Core bị ảnh hưởng trong ngày (số tuyệt đối, không %)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Quyết định lệch câu chữ kế hoạch — có lý do, có test chứng minh</span></div>
+      <p><b>1. <code>_first_match_unique()</code> thay vì <code>_first_match()</code> cho khoá ghép:</b>
+        nếu dùng <code>_first_match()</code> (giữ "dòng đầu" vô điều kiện), tình huống "2 dòng Hub
+        cùng Trace VÀ cùng Số tiền, khác chi nhánh" sẽ bị bước lọc Số tiền "khớp nhầm" ngay lập tức,
+        không bao giờ rơi được xuống bước lọc chi nhánh — ngược ý đồ nghiệp vụ. Viết test tái hiện lỗi
+        này trước khi sửa (đỏ với <code>_first_match</code>, xanh với <code>_first_match_unique</code>).
+        Trên dữ liệu thật hiện có KHÔNG đổi kết quả gì (0/38 nhóm có ≥2 dòng cùng Số tiền), chỉ khác
+        khi có ca thật kiểu này xuất hiện sau này.</p>
+      <p><b>2. Phạm vi <code>try/except LoiDinhDangSoTien</code> quanh <code>doc_so_tien()</code> —
+        sửa lại sau phản biện B10:</b> bản đầu gọi <code>doc_so_tien()</code> 1 lần trên TOÀN BỘ
+        76 dòng/38 nhóm gộp lại — 1 dòng Số tiền sai định dạng ở BẤT KỲ nhóm nào sẽ tắt khoá phụ của
+        CẢ 38 nhóm (kể cả 37 nhóm sạch), rộng hơn ý PLAN ("bỏ bước lọc theo Số tiền cho <i>nhóm đó</i>"
+        — số ít). Sửa: gọi <code>doc_so_tien()</code> THEO TỪNG NHÓM TRACE riêng — 1 dòng lỗi giờ chỉ
+        làm mất khoá phụ của ĐÚNG nhóm chứa dòng đó. Thêm test
+        <code>test_so_tien_sai_dinh_dang_chi_mat_khoa_phu_dung_nhom_do</code> khoá đúng hành vi
+        này (2 nhóm, 1 nhóm lỗi 1 nhóm sạch — xác nhận nhóm sạch không bị ảnh hưởng). Tác động thực
+        tế trên dữ liệu hiện có = 0 (0/38 nhóm có Số tiền sai định dạng).</p>
+
+      <div class="label"><span class="pill pill-green">Xác nhận qua kịch bản "Citad chưa về" (agent phản biện B10 tự dựng lại độc lập)</span></div>
+      <p>Dựng lại batch thật 31/8-4/9/2026 (bỏ Citad ngày 04/09 mô phỏng "chấm hôm nay, Citad ngày
+        mai chưa về"), chạy <code>main_from_dir()</code> 2 lần (bản chỉ có B1, và bản có cả B1+B3),
+        so cột TT theo khoá (REFERENCE, TRBRCD, CRAMOUNT, TRDATE) trên toàn bộ 158.906 dòng Core:</p>
+      <table>
+        <tr><th>REFERENCE</th><th>TRBRCD</th><th>CRAMOUNT</th><th>TT (B1-only)</th><th>TT (B1+B3)</th></tr>
+        <tr><td>1000API141779571 (ca gốc)</td><td>8010</td><td>1.000.000</td><td>HT lỗi</td><td><b>Chờ đi kênh</b></td></tr>
+        <tr><td>1000API142351741 (STT4 — xem nghi vấn dưới)</td><td>7608</td><td>9.000.000</td><td>Hoàn thành</td><td><b>Chờ đi kênh</b></td></tr>
+        <tr><td>1000API5655684 (ca MỚI, ngày 04/09, ngoài 5 ca đã biết)</td><td>4303</td><td>10.000.000</td><td>Chờ đi kênh</td><td><b>Hoàn thành</b></td></tr>
+      </table>
+      <p>Đúng <b>3/158.906 dòng lệch</b> giữa 2 bản, không dòng nào khác bị đổi ngoài dự kiến —
+        <b>Chưa cân khớp trước khi có B3</b> (3 dòng TT sai), <b>Đã cân khớp sau khi có B3</b> (0 dòng
+        lệch còn lại, đúng 3 dòng đó được sửa đúng — luật <code>docs/SKILL.md</code>, không dùng %).</p>
+
+      <div class="label"><span class="pill pill-gray">Cố ý KHÔNG tự sửa — nghi vấn dữ liệu trong chính file xác nhận của Việt</span></div>
+      <p>STT4 (<code>Can_xac_nhan_thu_cong_Trace_trung.xlsx</code>, REFERENCE
+        <code>1000API142351741</code>, TRDATE 20260903, TRBRCD 7608, CRAMOUNT 9.000.000): Hub có 2
+        ứng viên cùng Trace — 550.000đ/"Hoàn thành" (REMARK không khớp Core) và
+        9.000.000đ/"Chờ đi kênh" (REMARK khớp CHÍNH XÁC REMARK Core, cột "Khớp đúng số tiền Core?" =
+        CÓ). Cột <code>"TT người chấm thủ công"</code> trong file lại ghi <code>"Hoàn thành"</code> —
+        trạng thái của ứng viên KHÔNG khớp REMARK/Số tiền, khác hẳn 4 ca còn lại (STT1,2,3,5) đều
+        thống nhất REMARK+Số tiền+"TT người chấm thủ công". Nghi đây là lỗi nhập liệu trong chính file
+        xác nhận — <b>KHÔNG tự sửa, không đưa vào assertion tự động</b> (đúng luật dự án "không suy
+        diễn ý nghĩa cột dữ liệu"). Cần Việt xác nhận lại riêng ca này trước khi coi "5/5 ca khớp" là
+        phát biểu chính thức. Agent phản biện B10 tự mở lại file gốc độc lập, xác nhận đúng bất
+        thường này, không chặn merge.</p>
+
+      <div class="label"><span class="pill pill-gray">Câu hỏi mở, không chặn — cần Việt xác nhận thêm 1 câu</span></div>
+      <p>Số tiền so sánh dùng cố định <code>CRAMOUNT</code> (Core) với "Số tiền thực chuyển" (Hub) —
+        đúng trên toàn bộ 76 dòng/38 nhóm đã khảo sát, nhưng chưa phải xác nhận nghiệp vụ chính thức
+        (có thể có giao dịch ghi ở <code>DRAMOUNT</code> thay vì <code>CRAMOUNT</code>, hoặc Hub trừ
+        phí làm lệch 2 số — chưa gặp trên dữ liệu hiện có). Thứ tự "Số tiền trước, chi nhánh sau" đọc
+        từ nguyên văn Việt ("Số tiền <i>hoặc</i> mã chi nhánh phát lệnh") — chữ "hoặc" cũng có thể đọc
+        là "dùng cái nào cũng được", cần Việt xác nhận lại bằng 1 câu.</p>
+
+      <p>236/236 test module ILO1000 pass (210 cũ không đổi + 26 mới — 4 lớp bảo đảm PLAN mục 5: cấu
+        trúc code chỉ ghi đè theo chỉ số dòng, test bất biến, property test sinh dữ liệu ngẫu nhiên,
+        đối chiếu ca thật). Toàn bộ suite dự án 1638/1661 pass — 23 lỗi còn lại ở
+        <code>test_ach_gl02_misden_algorithm.py</code>, môi trường thiếu biến
+        <code>DOI_CHIEU_ZIP_PASSWORD</code> trong <code>.env</code> của worktree, không liên quan B3.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">177</span>
+      <span class="card-title">Chấm ILO1000 — phân biệt "chưa đối chiếu được (thiếu nguồn)" với "đã kiểm mà không khớp" (2026-09-24)</span>
+      <span class="badge badge-done">Code + test xong (251/251 pass sau khi bổ sung theo phản biện), xác nhận trên dữ liệu thật, phản biện B9 ĐỒNG Ý, ĐÃ COMMIT ba4798d</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân gốc</span> thiếu 1 file pool làm cả cột TT lẫn cách hiểu "TT rỗng" đều sai, không có tín hiệu nào phân biệt được</div>
+      <p>Batch <code>19-21.9.2026</code> chạy thiếu file <code>Core thừa 18.9.xlsx</code> (11.821
+        dòng tồn đọng từ lần chấm trước) — <code>label_citad_provenance()</code> không có
+        <code>core_pool_label_map</code> để tra, khiến <b>11.694 dòng Citad</b> rơi thẳng vào TT rỗng
+        = "Citad thừa", không phân biệt được với dòng THẬT SỰ không có đối tác nào (bình thường chỉ
+        có 8 dòng). Người chấm nhìn báo cáo không biết đây là "chưa kiểm được vì thiếu dữ liệu đầu
+        vào" hay "đã kiểm kỹ mà không khớp" — 2 việc cần 2 hành động khác hẳn nhau (nạp bù file vs.
+        điều tra giao dịch thật). Mở rộng khảo sát phát hiện thêm: <b>thiếu Hub còn nguy hiểm hơn
+        thiếu pool</b> — Hub rỗng làm <code>Trace</code> Citad rỗng theo, <code>Map dc</code> (khoá
+        đối chiếu) bị CỤT, trong khi Core vẫn tự tính <code>Trace</code> riêng từ <code>REFERENCE</code>
+        → 2 bên LỆCH KHOÁ HỆ THỐNG, không chỉ "thiếu thông tin" — dòng đã hiện "đã khớp" cũng có thể
+        khớp SAI mà không có dấu hiệu gì khác trên chính dòng đó.</p>
+
+      <div class="label"><span class="pill pill-blue">Cơ chế</span> cột mới "Ghi chú đối chiếu" cuối sheet <code>citad</code>/<code>core</code>, phát hiện qua <code>kiem_nguon()</code></div>
+      <p><code>kiem_nguon(ten, paths, df, cot_khoa)</code> (hàm thuần, <code>process.py</code>) gom
+        đúng 3 kiểu hỏng cho MỖI nguồn: không có file / có file nhưng đọc ra 0 dòng / thiếu cột khoá
+        cần để dựng khoá tra (<code>Map dc</code>, STC...). Dùng chung cho 4 nguồn nhưng ở 2 mức thời
+        gian khác nhau: <b>pool Core thừa/pool OSB thừa tính theo cả BATCH</b> (<code>main_from_dir()</code>,
+        vì pool nạp 1 lần dùng chung mọi ngày), <b>Hub/OSB hôm nay tính THEO TỪNG NGÀY</b>
+        (<code>_run_one_day()</code>, vì cửa sổ ngày khác nhau mỗi ngày). Kết quả gộp lại thành 1 cột
+        <code>'Ghi chú đối chiếu'</code> qua <code>ghi_chu_thieu_nguon()</code>, không đổi giá trị cột
+        <code>TT</code> hiện có (đổi TT sẽ làm hỏng logic lọc "Citad thừa" đang dựa vào <code>TT==''</code>).</p>
+      <p><b>Bẫy kỹ thuật đã tránh (B1↔tính năng này):</b> <code>hub_raw</code> trong
+        <code>_run_one_day()</code> đã lọc theo cửa sổ ngày (bao gồm phần mở rộng "nhìn tới" do B1
+        thêm) — rỗng KHÔNG chắc là thiếu file, có thể chỉ vì cửa sổ ngày đó không có dòng khớp (hành
+        vi BÌNH THƯỜNG). Chỉ khi có file NHƯNG <code>hub_raw</code> (đã lọc) rỗng mới đọc lại
+        <code>load_hub()</code> KHÔNG áp cửa sổ, để phân biệt "file thật sự thiếu/rỗng" với "cửa sổ
+        hẹp" — tránh báo động giả cho trường hợp hoàn toàn bình thường này.</p>
+
+      <div class="label"><span class="pill pill-amber">Quyết định quan trọng nhất (Q-A, chốt 2026-09-23)</span> thiếu Hub đánh dấu MỌI DÒNG, thiếu pool/OSB hôm nay chỉ đánh dấu dòng chưa khớp</div>
+      <p><b>Thiếu Hub</b> → ghi chú áp cho <b>MỌI dòng</b> sheet <code>citad</code> VÀ
+        <code>core</code>, kể cả dòng đã có <code>TT</code> (đã khớp) — vì thiếu Hub làm SAI khoá hệ
+        thống, không phải chỉ thiếu thông tin; dòng "đã khớp" vẫn có thể khớp SAI mà không cách nào
+        nhận ra chỉ từ chính dòng đó. <b>Thiếu pool Core thừa/pool OSB thừa/OSB hôm nay</b> → CHỈ
+        đánh dấu dòng <code>TT</code> RỖNG (thiết kế gốc, không đổi) — 3 nguồn này chỉ làm thiếu 1
+        khả năng tra cứu, không làm sai khoá đang có. Hệ quả kéo theo (Q-B, tự quyết kỹ thuật): khi
+        thiếu Hub, pool "Core thừa" mới xuất sang batch sau vẫn PHẢI mang theo ghi chú trên toàn bộ
+        dòng — để cột này gán TRƯỚC <code>build_core_thua_pool()</code> (không phải SAU như bản
+        nháp đầu của kế hoạch, đã bị Q-A/Q-B chốt sau ghi đè), người chấm mở file pool ở batch sau
+        vẫn thấy rõ cảnh báo "batch trước thiếu Hub".</p>
+
+      <table>
+        <tr><th>Thay đổi</th><th>Chi tiết</th></tr>
+        <tr><td><code>process.py::kiem_nguon()</code> (mới, hàm thuần)</td><td>Gom 3 kiểu hỏng, dùng chung 4 nguồn</td></tr>
+        <tr><td><code>process.py::ghi_chu_thieu_nguon()</code> (mới, hàm thuần)</td><td>Tham số <code>nguon_thieu_moi_dong</code> (Hub) áp mọi dòng, <code>nguon_thieu_tt_rong</code> (pool/OSB hôm nay) chỉ áp dòng TT rỗng</td></tr>
+        <tr><td><code>pipeline.py::main_from_dir()</code></td><td>Tính thiếu pool theo BATCH, log CẢNH BÁO, truyền xuống <code>_run_one_day()</code></td></tr>
+        <tr><td><code>pipeline.py::_run_one_day()</code></td><td>Tính thiếu Hub/OSB hôm nay theo NGÀY; gán cột <code>'Ghi chú đối chiếu'</code> cho <code>core_out</code> TRƯỚC <code>build_core_thua_pool()</code>, cho <code>citad_out</code> trước khi tách <code>citad_thua_df</code></td></tr>
+        <tr><td><code>export.py</code></td><td><code>citad_cols</code>/<code>core_cols</code> thêm cột mới ở CUỐI (test khoá theo chỉ số cột 0/3/5 vẫn pass); thêm tham số <code>canh_bao</code> — chèn khối cảnh báo lên ĐẦU sheet <code>'Tóm tắt'</code> khi lượt chạy có thiếu nguồn</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Xác nhận trên dữ liệu thật — 2 kịch bản quan trọng nhất</span></div>
+      <table>
+        <tr><th>Kịch bản</th><th>Kết quả</th></tr>
+        <tr><td>Tái lập ĐÚNG sự cố gốc (batch 19-21.9.2026, bỏ <code>Core thừa 18.9.xlsx</code>)</td>
+          <td><b>11.694/11.694</b> dòng Citad thừa đều có ghi chú <code>'Pool Core thừa: không có
+            file trong dữ liệu vào'</code> — khớp CHÍNH XÁC con số sự cố gốc; 0 dòng đã khớp bị ghi
+            chú nhầm (batch này không thiếu Hub)</td></tr>
+        <tr><td>Thiếu Hub hoàn toàn (cùng batch, xoá cả 2 file pHub)</td>
+          <td><b>55.764/55.764</b> dòng sheet <code>citad</code> và <b>58.783/58.783</b> dòng sheet
+            <code>core</code> đều có ghi chú chứa "Hub" — <b>kể cả 62 dòng Core đã có TT (đã khớp
+            Citad)</b>, đúng yêu cầu Q-A trên dữ liệu thật, không chỉ trên test giả lập</td></tr>
+      </table>
+      <p>Ngoài 2 kịch bản trên, tester còn tự dựng thêm ca "Hub CÓ file nhưng cửa sổ ngày hẹp" (0
+        dòng ghi chú, không báo động giả) và so khớp toàn bộ 8 file/sheet của 1 batch ĐỦ cả 4 nguồn
+        với baseline HEAD trước thay đổi (dựng bằng <code>git worktree</code>, không dùng
+        <code>git stash</code>) — <b>0 dòng lệch</b>, cột mới rỗng 100% đúng thiết kế. Chi tiết đầy
+        đủ: <code>pipeline/TEST_REPORT_chua_doi_chieu.md</code>.</p>
+      <p><b>249/249 test module ILO1000 pass</b> (236 cũ không đổi + 13 mới, không sửa test nào đã
+        có). Toàn bộ suite dự án 1652/1675 pass — 23 lỗi còn lại vẫn ở
+        <code>test_ach_gl02_misden_algorithm.py</code> (thiếu biến môi trường
+        <code>DOI_CHIEU_ZIP_PASSWORD</code> trong <code>.env</code> của worktree), không liên quan
+        thay đổi này.</p>
+
+      <div class="label"><span class="pill pill-gray">Câu hỏi mở Q-C — đã chốt CHẤP NHẬN, không phải bug</span></div>
+      <p>Bất kỳ batch nào không đính kèm file "OSB thừa"/"Core thừa" — kể cả lần chấm đầu tiên hợp
+        lệ, chưa từng có pool — sẽ LUÔN có ghi chú "Pool ... không có file trong dữ liệu vào" trên
+        mọi dòng Citad còn thừa của batch đó, vì chương trình không có cách nào biết pool CÓ NÊN tồn
+        tại hay không ở lần chạy này. Đây KHÔNG phải lỗi phát sinh của tính năng này — là hệ quả trực
+        tiếp của 2 quyết định đã chốt TRƯỚC khi giao việc (Q2=(a) "giữ nguyên khi thiếu pool cũ", Q3=(a)
+        "chấp nhận báo động giả, viết ghi chú TRUNG TÍNH thay vì lời kết tội"). Nếu về sau thấy ghi
+        chú này xuất hiện quá thường xuyên gây nhiễu, cần quay lại hỏi Q-C gốc (có luồng/ngày nào
+        THIẾT KẾ SẴN không bao giờ có OSB/pool, để loại trừ khỏi cảnh báo) — cố ý KHÔNG tự suy diễn
+        câu trả lời này khi code.</p>
+
+      <p><b>Cập nhật:</b> B9 (phản biện) đã chạy, ĐỒNG Ý (khuyến nghị thêm 1 test e2e, đã bổ sung).
+        Đã commit <code>ba4798d</code>. Chi tiết đầy đủ mọi quyết định thiết kế:
+        <code>pipeline/CODE_REPORT_chua_doi_chieu.md</code>.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">178</span>
+      <span class="card-title">Chấm ILO1000 — PR #138: Khánh review tìm 2 lỗi chặn merge (pickle DB qua tiến trình riêng + ruff F821)</span>
+      <span class="badge badge-done">Đã sửa, xác nhận bằng 2 test Khánh chỉ ra + ruff sạch — merge 25/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Lỗi 1 — mọi job sẽ hỏng ngay từ đầu trên máy chủ thật</span></div>
+      <p>Nhánh <code>feat/ilo1000-nghi-le-dai-2026-09-05</code> tách ra trước khi <code>develop</code>
+        tích hợp hạ tầng chạy tiến trình riêng cho cả 7 module đối chiếu (<code>chay_tach()</code>,
+        <code>backend/core/tien_trinh_doi_chieu.py</code>, ngân sách RAM qua
+        <code>backend/core/phien_doi_chieu.py</code>). Khi gộp 2 nhánh, <code>ilo1000_service.py</code>
+        tự động merge KHÔNG có xung đột chữ, nhưng kết quả gộp gọi
+        <code>chay_tach(main_from_dir, ..., db=db)</code> với <code>db</code> là
+        <code>sqlite3.Connection</code> SỐNG. <code>chay_tach()</code> gửi tham số sang tiến trình con
+        bằng pickle — Connection không pickle được →
+        <code>TypeError: cannot pickle 'sqlite3.Connection' object</code> ở MỌI job, không phải ca
+        biên. Test có sẵn trên <code>develop</code>
+        (<code>tests/test_ilo1000_job_thu_ket_qua.py</code>, 2 test) bắt đúng lỗi này sau khi gộp —
+        <code>TestChayJobQuaDuongThat</code> cũ của nhánh này KHÔNG bắt được vì
+        <code>conftest.py</code> mặc định <code>DOI_CHIEU_TIEN_TRINH=0</code> (chạy trong luồng,
+        không qua pickle).</p>
+      <p><b>Sửa (theo đúng đề xuất của Khánh):</b> đổi <code>main_from_dir()</code> nhận
+        <code>db_path: str | None</code> thay vì <code>db: sqlite3.Connection | None</code> — tiến
+        trình con tự <code>sqlite3.connect(db_path)</code> ngay trước khi cần
+        <code>tai_lich()</code>, đóng trong <code>finally</code>. <code>ilo1000_service.py::_run</code>
+        bỏ hẳn <code>sqlite3.connect</code>/<code>db.close</code> tay, truyền thẳng
+        <code>db_path=str(DB_PATH)</code> cho <code>chay_tach()</code>.</p>
+
+      <div class="label"><span class="pill pill-blue">Lỗi 2 — ruff F821 đỏ</span></div>
+      <p><code>_export_pool_thua_forward(old_core_pool: 'pd.DataFrame', ...)</code> dùng <code>pd</code>
+        trong chú thích kiểu dạng chuỗi nhưng <code>pipeline.py</code> chỉ import pandas CỤC BỘ trong
+        vài hàm khác, không có ở top-level → <code>pd</code> "chưa định nghĩa" theo ruff dù chạy không
+        lỗi. Sửa: thêm <code>import pandas as pd</code> ở đầu file.</p>
+
+      <table>
+        <tr><th>Xác nhận</th><th>Kết quả</th></tr>
+        <tr><td><code>tests/test_ilo1000_job_thu_ket_qua.py</code> (2 test Khánh chỉ ra)</td><td>2/2 pass</td></tr>
+        <tr><td><code>pytest tests/ -k ilo1000 -q</code></td><td>265/265 pass</td></tr>
+        <tr><td><code>ruff check backend/services/ilo1000/ --select F821,F823,E9</code></td><td>sạch</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-gray">Đánh lại số card</span></div>
+      <p>PR thêm 8 card (đánh số 119-126 theo nhánh riêng), nhưng <code>develop</code> đã dùng hết tới
+        card 161 lúc merge — đánh lại thành 162-169 (card này là 170). Lúc merge vào <code>develop</code>
+        (25/09/2026) các PR #136… đã chiếm tiếp 162-169 → đánh lại lần hai thành <b>170-177</b> (card
+        này là <b>178</b>); comment trong mã: <code>process.py</code> → "card 173", <code>ilo1000_service.py</code> → "card 178".</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-25</footer>
 </div>
 </body>
 </html>

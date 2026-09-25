@@ -74,12 +74,13 @@ def _load_one(path: Path) -> pd.DataFrame:
     return df
 
 
-def load_citad(paths: list[Path], ngay_int: int | None = None) -> pd.DataFrame:
+def load_citad(paths: list[Path], ngay_ints: int | set[int] | None = None) -> pd.DataFrame:
     """
     Đọc nhiều file CITAD CSV (mỗi file đã tự sửa AMOUNT="ltd") và ghép lại.
-    `ngay_int`: nếu truyền, chỉ giữ dòng có TRX_DATE == ngay_int — bắt buộc khi
-    1 file citad gộp chung dữ liệu NHIỀU ngày (xác nhận qua dữ liệu thật
-    14-15/7/2026: cả 5 file cổng đều trộn lẫn TRX_DATE 14 và 15).
+    `ngay_ints`: nếu truyền (1 ngày hoặc TẬP nhiều ngày — cửa sổ Citad "tới",
+    xem `pipeline._citad_forward_days()`), chỉ giữ dòng có TRX_DATE khớp —
+    bắt buộc khi 1 file citad gộp chung dữ liệu NHIỀU ngày (xác nhận qua dữ
+    liệu thật 14-15/7/2026: cả 5 file cổng đều trộn lẫn TRX_DATE 14 và 15).
     """
     if not paths:
         return pd.DataFrame(columns=CITAD_COLS_KEEP)
@@ -87,6 +88,9 @@ def load_citad(paths: list[Path], ngay_int: int | None = None) -> pd.DataFrame:
     df = pd.concat(frames, ignore_index=True)
     # Deduplicate theo SERIAL_NO (cổng khác nhau có thể trùng)
     df = df.drop_duplicates(subset=['SERIAL_NO'], keep='first')
-    if ngay_int is not None and 'TRX_DATE' in df.columns:
-        df = df[df['TRX_DATE'].fillna('').astype(str).str.strip() == str(ngay_int)].copy()
+    if ngay_ints is not None and 'TRX_DATE' in df.columns:
+        if isinstance(ngay_ints, int):
+            ngay_ints = {ngay_ints}
+        trx = df['TRX_DATE'].fillna('').astype(str).str.strip()
+        df = df[trx.isin({str(n) for n in ngay_ints})].copy()
     return df
