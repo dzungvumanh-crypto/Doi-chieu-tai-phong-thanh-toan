@@ -181,11 +181,15 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
 
     # ── Ngày (ngày trong tháng) — parse đầy đủ vì ngày đơn digit "5/05/..." bị lỗi khi dùng str[:2] ──
     ngay_gio = _safe_str(df[HUB_COL_NGAY_GIO])
-    df['Ngày'] = pd.to_datetime(ngay_gio, dayfirst=True, errors='coerce').dt.day.astype(float)
+    ngay_dt = pd.to_datetime(ngay_gio, dayfirst=True, errors='coerce')
+    df['Ngày'] = ngay_dt.dt.day.astype(float)
 
-    # ── Flag "Chờ đi kênh": ngày > ngày đối chiếu (giao dịch xử lý sau ngày đối chiếu) ──
-    ngay_dc_day = ngay_int % 100  # DD
-    after_mask = df['Ngày'].fillna(0) > ngay_dc_day
+    # ── Flag "Chờ đi kênh": NGÀY ĐẦY ĐỦ > ngày đối chiếu (giao dịch xử lý sau ngày đối chiếu) ──
+    # So cả năm-tháng-ngày, KHÔNG so ngày-trong-tháng: cửa sổ Hub nạp cả phiên kế tiếp (card 180)
+    # nên T=30/09 nạp dòng 01/10 (1 > 30 sai) và T=01/10 nạp dòng 30/09 (30 > 1 sai). Ngày không
+    # đọc được (NaT) so ra False — giống fillna(0) cũ. Xem review PR #143 (Khánh).
+    ngay_dc = pd.Timestamp(ngay_int // 10000, (ngay_int // 100) % 100, ngay_int % 100)
+    after_mask = ngay_dt.dt.normalize() > ngay_dc
     df.loc[after_mask, HUB_COL_TRANG_THAI] = 'Chờ đi kênh'
 
     df['ngay'] = ngay_int

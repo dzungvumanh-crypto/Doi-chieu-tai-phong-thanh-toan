@@ -136,6 +136,29 @@ class TestHubNgay:
         assert hub_out[HUB_COL_TRANG_THAI].iloc[0] == 'Thành công'
 
 
+class TestHubNgayRanhGioiThang:
+    """Review PR #143 (Khánh): so ngày-trong-tháng sai ở ranh giới tháng vì cửa sổ Hub nay
+    nạp cả phiên kế tiếp — T=30/09 nạp dòng 01/10, T=01/10 nạp dòng 30/09."""
+
+    def _tt(self, ngay_gio_val, ngay_int):
+        df = pd.DataFrame([_hub_row('S001', 'STC001', 'TRC001', 'Hoàn thành', ngay_gio_val)])
+        hub_out, _ = process_hub(df, {}, ngay_int)
+        return hub_out[HUB_COL_TRANG_THAI].iloc[0]
+
+    def test_T_30_09_dong_hub_01_10_la_cho_di_kenh(self):
+        assert self._tt('01/10/2026 08:00', 20260930) == 'Chờ đi kênh'
+
+    def test_T_01_10_dong_hub_30_09_giu_hoan_thanh(self):
+        assert self._tt('30/09/2026 08:00', 20261001) == 'Hoàn thành'
+
+    def test_vat_nam_31_12_sang_01_01(self):
+        assert self._tt('01/01/2027 08:00', 20261231) == 'Chờ đi kênh'
+        assert self._tt('31/12/2026 08:00', 20270101) == 'Hoàn thành'
+
+    def test_cung_ngay_khong_bi_flag(self):
+        assert self._tt('30/09/2026 23:59', 20260930) == 'Hoàn thành'
+
+
 class TestHubTraceLeadingZero:
     """
     Dữ liệu thật 06/07/2026: pHub xuất 'Số Trace 1' có số 0 thừa ở đầu tùy đợt

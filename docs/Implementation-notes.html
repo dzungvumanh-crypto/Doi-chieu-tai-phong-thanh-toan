@@ -22221,16 +22221,44 @@ This may happen if you try to create UI from a background task.</pre>
       <p>3 dòng đổi từ "Hoàn thành"/"HT lỗi" sang "Chờ đi kênh": Trace trùng giữa lệnh ngày 21 và 22; bản cũ khớp nhầm,
         bản mới đúng nhờ khoá phụ Số tiền/chi nhánh (<code>_khop_trace_trung</code>) — phản biện độc lập đã xác minh số tiền Core khớp đúng dòng Hub T+1.</p>
 
-      <div class="label"><span class="pill pill-gray">Theo dõi — có từ trước, chưa sửa</span></div>
-      <p><code>process_hub</code> (process.py ~186-189) so <b>chỉ số ngày-trong-tháng</b>, sai ở ranh giới tháng: T=30/09 với dòng Hub kênh trả
-        01/10 giữ nhãn cũ thay vì "Chờ đi kênh"; T=01/10 với dòng kênh trả 30/09 bị gắn "Chờ đi kênh" sai. Card này làm ngày cuối tháng nạp
-        thêm Hub ngày 1 tháng sau nên tiếp xúc nhiều hơn. Chưa có dữ liệu thật vắt tháng — cần xử lý riêng.
-        Ngoài ra: Trace trùng mà cả số tiền lẫn chi nhánh cũng trùng vẫn rơi về dòng đầu theo thứ tự file (có log WARNING).</p>
+      <div class="label"><span class="pill pill-green">Sửa thêm theo review Khánh — ranh giới tháng</span></div>
+      <p><code>process_hub</code> (process.py) từng so <b>chỉ số ngày-trong-tháng</b> để gắn "Chờ đi kênh". Trước card này lỗi ít lộ vì batch chỉ có T thì Hub T+1 không được nạp;
+        sau card này Hub T+1 luôn được nạp nên T=30/09 với dòng kênh trả 01/10 giữ nhãn "Hoàn thành" (đáng lẽ "Chờ đi kênh") và T=01/10 với dòng 30/09 bị gắn "Chờ đi kênh" sai —
+        nặng hơn trước vì "Hoàn thành" trông như đã xong. Sửa: so <b>ngày đầy đủ</b> (<code>ngay_dt.dt.normalize() &gt; Timestamp(T)</code>; NaT so ra False như <code>fillna(0)</code> cũ).
+        4 test mới <code>TestHubNgayRanhGioiThang</code> (30/09↔01/10, vắt năm 31/12↔01/01, cùng ngày) — 3 test fail trên mã cũ. Khánh đã soát: không còn chỗ nào khác trong <code>ilo1000/</code> so theo ngày trong tháng.</p>
+      <p><b>Còn theo dõi (có từ trước, chưa sửa):</b> Trace trùng mà cả số tiền lẫn chi nhánh cũng trùng vẫn rơi về dòng đầu theo thứ tự file (có log WARNING).</p>
 
       <div class="label"><span class="pill pill-gray">Kiểm chứng</span></div>
       <p>3 test mới <code>TestHubCarryoverBatchMotNgay</code> (2 test đầu fail trên bản cũ, test 3 là chống hồi quy); 268 test có "ilo1000" pass;
         ruff F821/F823/E9 sạch trên backend/frontend/tests. Bằng chứng thật chỉ từ 1 ngày (22/09, batch 1 ngày) + 23/09 nối tiếp.
         1 lượt phản biện độc lập (Sonnet): ĐỒNG Ý.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">181</span>
+      <span class="card-title">Chấm ACH — kết quả hiện ngay tại tab đã chạy, tab Báo cáo chỉ còn Gộp pHub, log không lộ đường dẫn máy chủ</span>
+      <span class="badge badge-done">Đã code, chờ test — 25/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Vấn đề</span></div>
+      <p>Người chấm dùng qua LAN, không vào được máy chủ. Kết quả mọi lượt chạy bị đổ chung vào tab Báo cáo (trộn kết quả tab đi và tab đến),
+        log và thông báo lỗi in đường dẫn tuyệt đối của máy chủ kèm traceback, file CSV của Gộp pHub không có nút tải.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span></div>
+      <table>
+        <tr><th>Việc</th><th>Cách làm</th><th>Vì sao</th></tr>
+        <tr><td>Tách file theo tab</td><td>Giữ 1 endpoint/1 pipeline; <code>/start</code> nhận thêm <code>tab</code> (<code>di</code>/<code>den</code>), gắn vào job; frontend vẽ file của job vào card của đúng tab</td><td>Mỗi job đã có output_dir riêng nên không trộn ở backend; không đụng pipeline/Checkpoint/carryover</td></tr>
+        <tr><td>Lượt cũ còn trên máy chủ</td><td>Chuyển vào từng tab, lọc theo nhãn tab; job không nhãn bị bỏ qua</td><td>Danh sách cũ không còn ở Báo cáo</td></tr>
+        <tr><td>Đường dẫn trong log/lỗi</td><td>Dòng log thành công chỉ ghi tên file; <code>_an_duong_dan_may_chu()</code> ở <code>_run</code> lọc tập trung (cả dạng repr <code>\</code>); traceback ghi vào <code>logs/app.log</code>, màn hình chỉ có mã job. Giữ tiền tố <code>Hoàn thành:</code></td><td>Không sửa 30 chỗ raise ở 9 file nghiệp vụ; 2 nơi so mốc tiến trình vẫn khớp</td></tr>
+        <tr><td>Gộp pHub</td><td>Trả thêm <code>files</code> (xlsx + <code>GOP_PHUBLOI_KET_QUA.csv</code>) và có nút tải cho từng file; <code>tai_ket_qua_gop</code> chỉ nhận mã <code>phubgop_*</code> (không phải <code>phubgop_in_*</code>) và phải là file</td><td>CSV vượt ngưỡng trước đây không tải được; chặn đọc file đầu vào của lượt gộp khác</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-gray">Không đổi</span></div>
+      <p>Tên, cột, điều kiện xuất của các file (kể cả 4 file mang sang ngày sau); giá trị trả về của hàm xuất; thẻ "Kết quả tạm thời" vẫn ẩn chung khi bấm Chạy.</p>
 
     </div>
   </div>
